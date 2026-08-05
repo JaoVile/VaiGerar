@@ -49,7 +49,7 @@ ou 12x de R$ 274,91
 
 Três armadilhas, todas obrigatórias no parser:
 
-1. **Preço riscado** (`<s>`/`<del>` no HTML) é o preço velho — descartar **antes** de extrair. Por isso o parser trabalha sobre o HTML, não sobre texto puro.
+1. **Preço riscado** (`<s>`/`<del>` no HTML) é o preço velho — descartar **antes** de extrair. Por isso o parser trabalha sobre o HTML, não sobre texto puro. Verificado: gtOFERTAS usa `<s>`, CT Ofertas não usa nenhum — o tratamento é necessário mas não pode ser assumido como presente.
 2. **Parcela** (`12x de R$ 274,91`) — descartar valores precedidos de `\d+\s*x\s*(de)?` numa janela curta. Sem isso, um `min()` ingênuo dispara alerta com o valor da parcela.
 3. **Formato BR** — `4.199,00` → `419900` centavos. Ponto é milhar, vírgula é decimal.
 
@@ -57,7 +57,14 @@ Resultado: `prices_cents[]` com todos os candidatos válidos (auditoria) e `pric
 
 ### Detecção de loja
 
-Por domínio do link, incluindo encurtadores conhecidos (`amzn.to` → Amazon, `s.shopee.com.br` → Shopee, `mercadolivre.com`/`mlb.la` → Mercado Livre, `aliexpress`/`s.click.aliexpress` → AliExpress, `magazineluiza`/`magazinevoce` → Magalu). **Encurtador não é resolvido via HTTP** — seria uma requisição extra por post na ingestão, custo alto pra ganho baixo. Domínio desconhecido grava `store = null`.
+**Duas fontes, nessa ordem** — verificado em HTML real dos canais em 2026-08-05:
+
+1. **Domínio do link**, incluindo encurtadores de loja (`link.amazon`/`amzn.to` → Amazon, `s.shopee.com.br` → Shopee, `meli.la`/`mercadolivre.com` → Mercado Livre, `s.click.aliexpress.com` → AliExpress, `magazineluiza`/`magazinevoce` → Magalu).
+2. **Menção no texto** (`amazon`, `magalu`, `shopee`, `mercado livre`, `aliexpress`, `samsung`, `kabum`, `casas bahia`) quando o domínio não resolve.
+
+O passo 2 não é redundância: o **CT Ofertas encurta tudo pelo domínio próprio `canalte.ch`**, então 100% dos posts dele têm domínio inútil — e o texto cita a loja. Só o passo 1 perderia um canal inteiro.
+
+**Encurtador não é resolvido via HTTP na ingestão** — seria uma requisição extra por post, milhares por dia. Se as duas fontes falharem, grava `store = null`; resolver o redirect fica restrito aos posts que viram alerta (punhado por dia), se provar necessário.
 
 ## 4. Modelo de dados
 

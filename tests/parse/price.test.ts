@@ -22,6 +22,22 @@ describe("htmlToText", () => {
 	it("converte <br> em quebra de linha e decodifica entidades", () => {
 		expect(htmlToText("a<br/>b &amp; c")).toBe("a\nb & c");
 	});
+
+	it("decodifica referência numérica decimal (ex.: R&#036; do gt.OFERTAS)", () => {
+		expect(htmlToText("R&#036;3.149,10")).toContain("R$");
+	});
+
+	it("decodifica referência numérica hexadecimal", () => {
+		expect(htmlToText("R&#x24;3.149,10")).toContain("R$");
+	});
+
+	it("decodifica numéricas antes das nomeadas, sem dupla-decodificação", () => {
+		expect(htmlToText("&amp;#036;")).toBe("&#036;");
+	});
+
+	it("devolve a sequência original quando o code point é inválido", () => {
+		expect(htmlToText("&#99999999;")).toBe("&#99999999;");
+	});
 });
 
 describe("parsePrices", () => {
@@ -59,5 +75,9 @@ describe("parsePrices", () => {
 
 	it("ignora valores irrisórios abaixo de R$1", () => {
 		expect(parsePrices("cupom de R$ 0,50").priceCents).toBeNull();
+	});
+
+	it("pega preço com o cifrão em referência numérica (ex.: gt.OFERTAS real)", () => {
+		expect(parsePrices("A partir de R&#036;3.149,10").priceCents).toBe(314910);
 	});
 });

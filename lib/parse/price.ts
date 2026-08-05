@@ -13,20 +13,34 @@ const ENTITIES: Record<string, string> = {
 	"&nbsp;": " ",
 };
 
+/** Code point válido pra `String.fromCodePoint` sem lançar RangeError. */
+function isValidCodePoint(codePoint: number): boolean {
+	return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff;
+}
+
 /** HTML do post → texto puro, descartando o que estiver riscado (preço velho). */
 export function htmlToText(html: string): string {
 	const withoutStrike = html.replace(STRIKE_RE, " ");
 	const withBreaks = withoutStrike.replace(BR_RE, "\n");
 	const stripped = withBreaks.replace(TAG_RE, "");
 	// Telegram escapa caracteres como "$" em referências numéricas (ex.: "R&#036;"
-	// vira "R$"), não só nas entidades nomeadas — decodifica as duas formas.
+	// vira "R$"), não só nas entidades nomeadas — decodifica as duas formas, antes
+	// das nomeadas (senão "&amp;#036;" viraria "$" em vez de "&#036;" literal).
+	// Code point inválido/malformado (ex.: &#99999999;) devolve a sequência
+	// original em vez de lançar — um post excêntrico não pode derrubar o canal.
 	const withNumericEntities = stripped
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) =>
-			String.fromCodePoint(Number.parseInt(hex, 16)),
-		)
-		.replace(/&#(\d+);/g, (_, dec: string) =>
-			String.fromCodePoint(Number.parseInt(dec, 10)),
-		);
+		.replace(/&#x([0-9a-fA-F]+);/g, (match, hex: string) => {
+			const codePoint = Number.parseInt(hex, 16);
+			return isValidCodePoint(codePoint)
+				? String.fromCodePoint(codePoint)
+				: match;
+		})
+		.replace(/&#(\d+);/g, (match, dec: string) => {
+			const codePoint = Number.parseInt(dec, 10);
+			return isValidCodePoint(codePoint)
+				? String.fromCodePoint(codePoint)
+				: match;
+		});
 	return withNumericEntities.replace(
 		/&amp;|&lt;|&gt;|&quot;|&#39;|&nbsp;/g,
 		(m) => ENTITIES[m] ?? m,

@@ -18,7 +18,16 @@ export function htmlToText(html: string): string {
 	const withoutStrike = html.replace(STRIKE_RE, " ");
 	const withBreaks = withoutStrike.replace(BR_RE, "\n");
 	const stripped = withBreaks.replace(TAG_RE, "");
-	return stripped.replace(
+	// Telegram escapa caracteres como "$" em referências numéricas (ex.: "R&#036;"
+	// vira "R$"), não só nas entidades nomeadas — decodifica as duas formas.
+	const withNumericEntities = stripped
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) =>
+			String.fromCodePoint(Number.parseInt(hex, 16)),
+		)
+		.replace(/&#(\d+);/g, (_, dec: string) =>
+			String.fromCodePoint(Number.parseInt(dec, 10)),
+		);
+	return withNumericEntities.replace(
 		/&amp;|&lt;|&gt;|&quot;|&#39;|&nbsp;/g,
 		(m) => ENTITIES[m] ?? m,
 	);

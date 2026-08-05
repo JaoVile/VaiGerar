@@ -36,4 +36,14 @@ describe("decideBackfill", () => {
 		expect(d.done).toBe(false);
 		expect(d.nextCursor).toBe(28);
 	});
+
+	it("encerra com cursor travado quando o cursor não avança", () => {
+		const d = decideBackfill(
+			[post(30, "2026-03-01T00:00:00Z"), post(28, "2026-03-01T00:00:00Z")],
+			LIMITE,
+			28,
+		);
+		expect(d.done).toBe(true);
+		expect(d.reason).toMatch(/cursor.*travado/i);
+	});
 });

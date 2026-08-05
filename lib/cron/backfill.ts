@@ -16,6 +16,7 @@ export type BackfillDecision = {
 export function decideBackfill(
 	posts: ParsedPost[],
 	oldestAllowed: Date,
+	previousCursor?: number,
 ): BackfillDecision {
 	if (posts.length === 0) {
 		return { done: true, reason: "página vazia", nextCursor: null };
@@ -24,7 +25,11 @@ export function decideBackfill(
 	if (new Date(oldest.postedAt) < oldestAllowed) {
 		return { done: true, reason: "passou da janela", nextCursor: null };
 	}
-	return { done: false, reason: "continua", nextCursor: oldest.postId };
+	const nextCursor = oldest.postId;
+	if (previousCursor !== undefined && nextCursor === previousCursor) {
+		return { done: true, reason: "cursor travado", nextCursor: null };
+	}
+	return { done: false, reason: "continua", nextCursor };
 }
 
 export function oldestAllowedFrom(now: Date, months = BACKFILL_MONTHS): Date {
@@ -58,7 +63,11 @@ export async function backfillOnce(
 			const posts = parseChannelPage(html, channel.slug);
 			await savePosts(db, channel.slug, posts);
 
-			const decision = decideBackfill(posts, limite);
+			const decision = decideBackfill(
+				posts,
+				limite,
+				channel.backfill_cursor ?? undefined,
+			);
 			await db
 				.from("channels")
 				.update(

@@ -20,15 +20,17 @@ Hoje as duas exigem rolar o feed na mão e confiar na memória sobre o que é pr
 - Coleta continuamente os posts dos canais monitorados e guarda num arquivo pesquisável.
 - Faz backfill do histórico já existente nos canais (não espera meses acumulando).
 - Extrai preço, loja e link de cada post.
-- Responde busca em texto livre pelo bot, com estatística de preço (mínimo, mediana) do período.
-- Mantém "caças": alvo de produto + preço, configuradas por conversa guiada, que disparam alerta quando aparece post na faixa.
+- Responde busca sob demanda (`/agora <texto>`) com estatística de preço (mínimo, mediana) do período.
+- Mantém "caças": alvo de produto + preço + tolerância, configuradas por conversa guiada, que disparam alerta quando aparece post na faixa.
+- Manda um resumo diário comparando, por produto caçado, em quantas lojas ele apareceu no dia e onde saiu mais barato.
 
 ## 3. Decisões-chave
 
 | Decisão | Escolha | Por quê |
 |---|---|---|
 | Fonte dos dados | Scraping de `t.me/s/<canal>` | Canais públicos expõem HTML sem autenticação. Bot do Telegram **não consegue** ler canais que não administra, e userbot (MTProto) exigiria a sessão da conta pessoal em produção — risco desnecessário. |
-| Faixa de preço | `alvo ±5%` (ajustável por caça) | Generaliza pra qualquer produto e mata acessório de brinde: capa de R$29 nunca cai na faixa de um aparelho de R$3.000. Substitui lista negra de palavras, que precisaria de manutenção eterna. |
+| Faixa de preço | `alvo ± tolerância`, padrão 5%, **escolhida por caça na conversa** | Generaliza pra qualquer produto e mata acessório de brinde: capa de R$29 nunca cai na faixa de um aparelho de R$3.000. Substitui lista negra de palavras, que precisaria de manutenção eterna. A tolerância certa depende do produto (celular tem cauda pra baixo, garrafinha não), então quem decide é você, caça a caça. |
+| Alerta imediato vs. resumo | Os dois | Alerta imediato ganha oferta relâmpago. Resumo diário responde outra pergunta — "em quantos lugares isso está em promoção hoje e onde está mais barato?" — que alerta solto não responde. |
 | Onde roda | Vercel + Supabase | Bot conversacional exige endpoint HTTP escutando — cron puro (GitHub Actions) não sustenta conversa. Postgres dá full-text search em português de graça. Stack já dominada. |
 | Agendamento | cron-job.org → rota autenticada | Vercel Hobby limita crons nativos; scheduler externo com header `x-cron-secret` é o padrão já usado no Touvie. |
 | Autenticação | Allowlist de `chat_id` | Sistema mono-usuário. Supabase Auth e RLS seriam peso morto. |
@@ -125,11 +127,21 @@ alerts (
   unique (hunt_id, post_row_id)      -- dedup estrutural, não lógica de aplicação
 )
 
+-- Preferências (uma linha por chat)
+user_settings (
+  chat_id             bigint primary key,
+  tolerance_default   numeric(5,2) not null default 5.0,   -- sugerida na conversa
+  digest_enabled      boolean not null default true,
+  digest_hour         smallint not null default 20,        -- hora BRT do resumo
+  digest_sent_on      date,                                -- trava anti-duplicata
+  search_months       smallint not null default 6          -- janela padrão da busca
+)
+
 -- Sessões de conversa do bot
 bot_sessions (
   chat_id     bigint primary key,
   flow        text not null,          -- 'new_hunt'
-  step        text not null,          -- 'ask_product' | 'ask_price' | 'confirm'
+  step        text not null,          -- 'ask_product' | 'ask_price' | 'ask_tolerance' | 'confirm'
   data        jsonb not null default '{}',
   updated_at  timestamptz not null default now(),
   expires_at  timestamptz not null
@@ -146,7 +158,7 @@ Duas escolhas que carregam peso:
 ## 5. Arquitetura
 
 ```
-app/api/cron/tick/route.ts        # coleta + casa caças + entrega alertas
+app/api/cron/tick/route.ts        # coleta + casa caças + entrega alertas + resumo do dia
 app/api/cron/backfill/route.ts    # caminha o histórico pra trás
 app/api/telegram/[bot]/route.ts   # webhook (um handler, dois bots)
 
@@ -157,6 +169,7 @@ lib/parse/store.ts                # texto → loja + link    ← puro
 lib/match/terms.ts                # query → variantes      ← puro
 lib/match/hunt.ts                 # (post, hunt) → bool    ← puro
 lib/search/query.ts               # busca histórica + estatística
+lib/digest/build.ts               # alertas do dia → comparativo  ← puro
 lib/bot/router.ts                 # update → comando/sessão
 lib/bot/flows/new-hunt.ts         # máquina de estados da conversa
 lib/telegram.ts                   # sendMessage, escapeHtml
@@ -182,7 +195,20 @@ cron-job.org → x-cron-secret → /api/cron/tick
        sendMessage no bot correspondente ao bot_key da caça
        sucesso → sent_at = now()
        falha   → attempts += 1
+  4. resumo diário: se hora BRT >= digest_hour e digest_sent_on < hoje
+       agrupa os alertas de hoje por caça, monta o comparativo, envia
+       digest_sent_on = hoje
 ```
+
+O resumo diário mora dentro do tick em vez de virar cron próprio: o tick já roda de 5 em 5 min, então a checagem "passou da hora e ainda não mandei hoje" custa nada e elimina um job a mais pra manter e monitorar. `digest_sent_on` é o que garante envio único mesmo com o tick rodando 288 vezes por dia.
+
+### Resumo diário
+
+Responde a pergunta que alerta avulso não responde: **o mesmo produto apareceu em quantos lugares hoje, e onde saiu mais barato?**
+
+Agrupa os alertas do dia por caça e, dentro de cada caça, por loja — mostrando o preço de cada uma em ordem crescente, com a mais barata destacada e a variação até a mais cara. Caça sem alerta no dia não aparece; dia inteiro sem nada não gera mensagem (silêncio é resposta).
+
+Não é repetição do alerta imediato porque a unidade é outra: o alerta é um post, o resumo é o **panorama do dia por produto**. Desligável em `digest_enabled`, com hora em `digest_hour`.
 
 Busca em duas fases é deliberada: o índice GIN + índice de preço reduzem centenas de posts a poucos candidatos dentro do Postgres; a checagem exata de termos roda em app sobre esse punhado. Rodar regex sobre a tabela inteira não escala depois de alguns meses de arquivo.
 
@@ -216,24 +242,29 @@ A mediana é o que dá sentido ao número: saber que o mínimo histórico foi R$
 
 Webhook em `/api/telegram/[bot]`, validando `X-Telegram-Bot-Api-Secret-Token` e a allowlist de `chat_id`. Sessões em `bot_sessions`, expiram em 10 min.
 
-- **Texto livre sem sessão ativa** → busca histórica (Etapa B) e devolve o resumo.
+- **`/agora <texto>`** → consulta o arquivo na hora e devolve as melhores ofertas do período. `/agora calça de academia`.
+- **Texto livre sem sessão ativa** → mesma coisa que `/agora`. O comando existe pra ser explícito e pra funcionar mesmo com sessão aberta; digitar solto é o atalho.
 - **`/cacar`** → inicia a conversa guiada:
   1. "Qual produto você quer caçar?" → `s25 plus`
   2. Bot **consulta o histórico antes de perguntar o preço** e responde com o contexto: *"Nos últimos 6 meses achei 23 ofertas. Mínimo R$2.799, mediana R$3.150. Quanto você quer pagar?"*
-  3. → `3000` → "Faixa: R$2.850 a R$3.150 (±5%). Confirma?"
-  4. Confirmado → cria a caça.
+  3. → `3000` → "Qual tolerância? (padrão 5% → R$2.850–3.150)" com botões de **5% / 10% / 15%** e opção de digitar outro valor. Cada botão mostra a faixa que produz, então você escolhe vendo o resultado, não o percentual abstrato.
+  4. → "Faixa: R$2.700 a R$3.300 (±10%). Confirma?" → cria a caça.
 - **`/cacas`** → lista as ativas com botões de pausar/excluir.
+- **`/resumo`** → dispara o resumo do dia na hora, sem esperar o horário.
+- **`/config`** → liga/desliga o resumo diário, muda a hora e a tolerância padrão.
 - **`/ajuda`**.
 
-O passo 2 é o que amarra os subsistemas: a busca deixa de ser feature separada e vira o que impede você de configurar um alvo irreal que nunca dispara.
+O passo 2 é o que amarra os subsistemas: a busca deixa de ser feature separada e vira o que impede você de configurar um alvo irreal que nunca dispara. O passo 3 usa a mesma informação — com mínimo e mediana na tela, escolher entre 5% e 15% deixa de ser chute.
 
-**Pronto quando:** dá pra criar, listar, pausar e excluir caça inteiramente pelo chat, e sessão abandonada expira sem travar o bot.
+**Pronto quando:** dá pra criar, listar, pausar e excluir caça inteiramente pelo chat, `/agora` responde busca livre, e sessão abandonada expira sem travar o bot.
 
-### Etapa D — Alertas
+### Etapa D — Alertas + resumo diário
 
-`lib/match/hunt.ts` + as partes 2 e 3 do tick. Mensagem de alerta traz produto, preço, quanto está abaixo do alvo, loja, data e link do post original.
+`lib/match/hunt.ts` + as partes 2, 3 e 4 do tick, e `lib/digest/build.ts`.
 
-**Pronto quando:** uma caça de teste com alvo propositalmente alto dispara no primeiro tick, não repete no segundo, e uma falha simulada de entrega é reenviada no tick seguinte.
+Mensagem de alerta traz produto, preço, quanto está abaixo do alvo, loja, data e link do post original. Resumo diário traz o comparativo por loja descrito no §5.
+
+**Pronto quando:** uma caça de teste com alvo propositalmente alto dispara no primeiro tick, não repete no segundo, uma falha simulada de entrega é reenviada no tick seguinte, o resumo sai uma única vez no dia mesmo com 288 ticks, e dia sem alerta não gera mensagem.
 
 ## 7. Erros
 
@@ -255,6 +286,8 @@ Vitest. O alvo são os módulos puros:
 - **`match/terms`** — `s25 plus` casa com `S25+`, `Galaxy S25 Plus`, `S25 PLUS`; **não** casa com `S25 Ultra` nem `S24 Plus`.
 - **`match/hunt`** — a capa de R$29, o seminovo, o post na faixa, o post R$1 acima do teto.
 - **`search/query`** — mediana e mínimo sobre conjunto conhecido.
+- **`hunts` (faixa)** — alvo 3000 com 5% → 2850–3150; com 10% → 2700–3300; arredondamento em valor quebrado (alvo 999 com 5%).
+- **`digest/build`** — mesma caça com 3 lojas no dia vira um comparativo ordenado; dia vazio devolve `null` (nada a enviar); duas invocações no mesmo dia produzem um envio só.
 
 Fixtures vêm de posts reais capturados dos canais, não inventados.
 
@@ -281,9 +314,9 @@ Fixtures vêm de posts reais capturados dos canais, não inventados.
 | `/api/cron/tick` | 5 min |
 | `/api/cron/backfill` | 10 min (no-op depois de completo) |
 
-**Caça inicial (seed):** Galaxy S25+ 256/512GB novo, alvo R$3.000, tolerância 5% → faixa R$2.850–3.150, `terms_none` com `capa, pelicula, película, carregador, cabo, suporte, seminovo, semi-novo, recondicionado, vitrine, usado`.
+**Caça inicial:** Galaxy S25+ 256/512GB novo, alvo R$3.000, `terms_none` com `capa, pelicula, película, carregador, cabo, suporte, seminovo, semi-novo, recondicionado, vitrine, usado`.
 
-> Nota: o alvo de R$3.000 combinado antes correspondia a uma faixa manual de R$2.500–3.300. Com a regra ±5% a faixa fica **R$2.850–3.150**, mais estreita. Se a intenção era a faixa larga, a caça deve nascer com `tolerance_pct = 10` (R$2.700–3.300) — decidir antes de rodar o seed.
+A tolerância **não é semeada** — essa caça nasce pelo fluxo `/cacar`, como qualquer outra. Você vê mínimo e mediana reais do arquivo e escolhe entre 5% (R$2.850–3.150), 10% (R$2.700–3.300) ou outro valor, já sabendo o que cada um pega. Criar pelo bot em vez de por SQL também serve de teste de aceitação da Etapa C.
 
 ## 10. Fora de escopo
 

@@ -41,21 +41,30 @@ do zero, então são elas que ditam o ritmo.
 Dois defeitos apareceram ao testar a busca contra dado real. Nenhum dos dois
 foi previsto no papel; ambos só existem porque o arquivo existe.
 
-### 1. O descarte de parcela é estreito demais
+### 1. Valor de cupom é lido como preço do produto
 
-O parser só reconhece o formato `12x de R$ 274,91`. Um post escrito como
-"Galaxy S25+ — PARCELADO SEM JUROS — R$ 30,00" passa direto, e o S25+ entra no
-arquivo valendo R$30.
+*(Corrigido em 10/08: o diagnóstico inicial dizia "parcela em outro formato".
+Errado — ao ler os posts reais, a causa é outra.)*
+
+Os posts anunciam cupons em reais, e o parser conta esses valores como candidatos
+a preço. Como `priceCents` é o **menor** valor encontrado, o cupom ganha:
+
+```
+"aplicar o cupom R$ 30 OFF na página"          → 3000    vira o preço
+"Aplique R$ 30 OFF no anúncio"                 → 3000    vira o preço
+"Resgate o cupom de R$ 80 ... cupom de R$ 500" → 8000    vira o preço
+"VALOR DA OFERTA R$ 3.967 - ANTES R$ 4.299"    → 396700  era esse
+```
 
 Isso **não gera alerta falso** — a faixa `alvo ± tolerância` tem piso e protege.
 Mas **contamina a mediana**, que é justamente o número usado para decidir se um
 preço é bom. Um defeito que corrompe a régua é pior que um que corrompe uma
 leitura isolada.
 
-Onde mexer: `INSTALLMENT_RE` em `lib/parse/price.ts`. Ampliar para reconhecer
-"parcelado", "sem juros", "à vista por", "no cartão". As fixtures reais em
-`tests/fixtures/` já contêm exemplos — procure por posts com preço absurdamente
-baixo para um produto caro.
+Correção: em `lib/parse/price.ts`, descartar valores cujo contexto anterior
+contenha marcador de cupom (`cupom`, `OFF`, `desconto`, `resgate`). Verificado
+contra os três posts acima: com o descarte, o menor valor restante é o preço
+certo em todos. O preço "ANTES" continua sendo absorvido por ser o maior.
 
 ### 2. A busca casa o termo, não o produto
 

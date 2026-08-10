@@ -67,6 +67,29 @@ Como corrigir:
 5. Redeployar e chamar `/api/cron/tick` manualmente pra confirmar
    `"allEmpty":false`.
 
+## Razões de parada do backfill e o que fazer
+
+`decideBackfill` (`lib/cron/backfill.ts`) produz quatro razões de parada por
+canal, por invocação. Só uma delas é falha real; as outras três são término
+normal do arquivo daquele canal:
+
+| Razão | `backfill_complete` vira `true`? | Isso é falha? | O que o operador vê | Ação |
+|---|---|---|---|---|
+| `"página vazia"` | sim | Não — fim de arquivo | Página sem nenhuma âncora `data-post`: chegou no fim real do histórico do canal. Log `"<slug>: 0 posts, página vazia"`; HTTP 200 | Nenhuma |
+| `"passou da janela"` | sim | Não — janela cumprida | Página trouxe posts, mas o mais antigo já é anterior à janela de 6 meses (`oldestAllowedFrom`). Log `"<slug>: N posts, passou da janela"`; HTTP 200 | Nenhuma |
+| `"cursor travado"` | sim | Não, o código não trata como falha (`broken: false`) — mas é o sinal mais fraco dos três | Página trouxe posts, mas o post mais antigo repete o `postId` do cursor anterior: a paginação do `t.me` parou de andar antes de alcançar a janela de 6 meses. Log `"<slug>: N posts, cursor travado"`; HTTP 200 | Nenhuma automática. Se quiser confirmar: olhe o post mais antigo salvo do canal — se for razoável que o canal tenha menos de 6 meses de histórico publicado, é isso mesmo. O código não distingue "canal genuinamente raso" de "bug de paginação do `t.me` que nunca avançou" — os dois terminam do mesmo jeito, `backfill_complete = true` |
+| `"parser quebrado"` | **não** | **Sim — quebra** | Página trouxe âncoras `data-post` (os posts existem), mas `parseChannelPage` extraiu zero: o `t.me` mudou a marcação interna da mensagem, não é fim de arquivo. Cursor **não avança**, `backfill_complete` **não muda**. Log `"CANÁRIO: parser quebrado no backfill"` com os reports; **HTTP 500** | Ação imediata — mesmo procedimento do canário do tick (seção acima): atualizar as fixtures de `tests/fixtures/`, rodar `pnpm test` pra ver o que quebrou, corrigir os seletores em `lib/collector/parse.ts` |
+
+Existe ainda um quinto caso fora de `decideBackfill`: exceção de rede ou do
+Postgres dentro do `try/catch` de `backfillOnce`, reportada com razão
+`"erro"` e `reports[].error` preenchido. Não atualiza `backfill_cursor` nem
+`backfill_complete` para aquele canal. A rota só devolve HTTP não-200 por
+causa disso se **nenhum** canal do lote tiver sido processado com sucesso
+(`summary.noneOk`, log `"Backfill: nenhum canal processado com sucesso"`,
+HTTP 500) — se 1 de N canais errou e os outros seguiram normalmente, a
+resposta ainda é 200 e o único jeito de notar é inspecionar `reports[].error`
+no JSON.
+
 ## Nota sobre contagem no Supabase (PostgREST)
 
 Ao consultar contagens via `@supabase/supabase-js`/PostgREST, use sempre
@@ -143,10 +166,19 @@ tudo normal, mesmo com `backfill_complete = false` por dias:
   backfill (arquivo histórico) e o tick (coleta do que é novo) são
   independentes; um não bloqueia o outro.
 
-Só investigue como problema se, depois de rodar por muitos dias, o
-`backfill_cursor` **parar de mudar** com o canal ainda `backfill_complete =
-false` — isso sim é sintoma real, coberto por `decideBackfill` (razão
-`"cursor travado"` em `lib/cron/backfill.ts`).
+**Não existe um estado real de `backfill_cursor` parado com `backfill_complete
+= false`** — quando a paginação do `t.me` para de andar sem quebra de parser,
+`decideBackfill` já marca `backfill_complete = true` sozinho, na hora (razão
+`"cursor travado"`, ver tabela na seção "Razões de parada do backfill e o que
+fazer" abaixo). Não fica parado esperando investigação; procurar por esse
+sinal é procurar o estado errado.
+
+O sinal que de fato exige ação humana durante o backfill é a resposta
+**HTTP 500** com `"CANÁRIO: parser quebrado no backfill"` no log — significa
+que o `t.me` mudou o HTML e o parser parou de extrair posts, e por isso o
+código propositalmente **não** avança o cursor nem marca `backfill_complete`
+(ver tabela abaixo, razão `"parser quebrado"`). É esse status HTTP e essa
+linha de log que valem monitorar, não o comportamento do cursor.
 
 ## Pendências desta etapa
 

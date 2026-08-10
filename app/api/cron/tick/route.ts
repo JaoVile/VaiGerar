@@ -25,6 +25,17 @@ export async function POST(req: Request) {
 
   const summary = summarize(reports);
 
+  // Falha parcial: 6 de 7 canais quebrados com um funcionando ainda devolve 200
+  // (o scheduler não deve tratar a rodada como perdida), mas não pode passar em
+  // silêncio — sem este log, canal morto some do radar por semanas.
+  if (summary.failed > 0) {
+    const falhos = reports.filter((r) => r.error !== null).map((r) => `${r.slug}: ${r.error}`);
+    console.error(
+      `Tick: ${summary.failed} de ${reports.length} canais falharam —`,
+      falhos.join(" | "),
+    );
+  }
+
   // Canário: todo canal devolvendo zero post significa que o t.me mudou o HTML.
   // Falhar em silêncio aqui seria meses achando que não teve oferta.
   if (summary.allEmpty) {

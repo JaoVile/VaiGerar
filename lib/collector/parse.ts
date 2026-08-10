@@ -16,6 +16,28 @@ const POST_ANCHOR_RE = /data-post="([^"/]+)\/(\d+)"/g;
 const TEXT_RE = /<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/;
 const TIME_RE = /<time[^>]*datetime="([^"]+)"/;
 
+type PostAnchor = { index: number; postId: number };
+
+/** Todas as ocorrências de `data-post` na página, na ordem em que aparecem. */
+function postAnchors(html: string): PostAnchor[] {
+  return [...html.matchAll(POST_ANCHOR_RE)].map((m) => ({
+    index: m.index ?? 0,
+    postId: Number(m[2]),
+  }));
+}
+
+/**
+ * Quantas âncoras `data-post` distintas a página tem. Puro.
+ *
+ * É o denominador que `parseChannelPage` descarta: página com âncoras mas zero
+ * posts extraídos é parser quebrado (o t.me mudou o markup interno da mensagem),
+ * não fim de arquivo. Quem chama usa a diferença pra decidir se pode avançar o
+ * cursor do backfill — ver `decideBackfill`.
+ */
+export function countPostAnchors(html: string): number {
+  return new Set(postAnchors(html).map((a) => a.postId)).size;
+}
+
 /**
  * HTML de t.me/s/<slug> → posts.
  *
@@ -25,10 +47,7 @@ const TIME_RE = /<time[^>]*datetime="([^"]+)"/;
  * só contém tags inline (a, b, i, br, s, code), nunca <div> aninhada.
  */
 export function parseChannelPage(html: string, slug: string): ParsedPost[] {
-  const anchors = [...html.matchAll(POST_ANCHOR_RE)].map((m) => ({
-    index: m.index ?? 0,
-    postId: Number(m[2]),
-  }));
+  const anchors = postAnchors(html);
 
   const seen = new Set<number>();
   const posts: ParsedPost[] = [];
@@ -46,13 +65,18 @@ export function parseChannelPage(html: string, slug: string): ParsedPost[] {
     const text = htmlToText(rawHtml).trim();
     if (text.length === 0) continue;
 
+    // `datetime` malformado faria `toISOString()` lançar RangeError e matar a
+    // página inteira — um post ruim custaria os outros 19. Pula só ele.
+    const postedAt = new Date(timeMatch[1]);
+    if (Number.isNaN(postedAt.getTime())) continue;
+
     const { pricesCents, priceCents } = parsePrices(rawHtml);
     const { store, productUrl } = detectStore(rawHtml);
 
     seen.add(postId);
     posts.push({
       postId,
-      postedAt: new Date(timeMatch[1]).toISOString(),
+      postedAt: postedAt.toISOString(),
       text,
       url: `https://t.me/${slug}/${postId}`,
       priceCents,

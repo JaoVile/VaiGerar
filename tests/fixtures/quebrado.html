@@ -1,0 +1,65 @@
+<!--
+  FIXTURE HOSTIL — não é HTML real do t.me, é o cenário de quebra de parser.
+
+  Simula o t.me tendo renomeado o container do corpo da mensagem:
+  `div.tgme_widget_message_text` virou `div.tgme_widget_msg_text`. Tudo o mais
+  continua igual ao HTML real — as âncoras `data-post` estão lá, o `<time
+  datetime>` está lá, o texto das ofertas está lá.
+
+  Resultado: `countPostAnchors` devolve 3, `parseChannelPage` devolve [].
+
+  É exatamente o estado que se auto-destruía antes: `decideBackfill` via lista
+  vazia, concluía "página vazia", e `backfillOnce` gravava
+  `backfill_complete = true` — irreversível, porque nada no sistema devolve esse
+  campo pra `false`. Com âncoras > 0 e posts = 0 a decisão agora é
+  "parser quebrado": não avança cursor, não marca completo, e a rota devolve 500.
+
+  Serve também de canário do tick (`allEmpty`), que já tratava o mesmo sintoma.
+
+  Se um dia esta fixture voltar a produzir posts, quem mudou foi o parser (ficou
+  frouxo demais) — investigue antes de "consertar" o teste.
+-->
+<!DOCTYPE html>
+<html>
+  <head><title>Canal de teste</title></head>
+  <body>
+    <main class="tgme_main">
+      <section class="tgme_channel_history js-message_history">
+
+        <div class="tgme_widget_message_wrap js-widget_message_wrap">
+          <div class="tgme_widget_message text_not_supported_wrap js-widget_message" data-post="canalquebrado/1001" data-view="eyJjIjotMSwicCI6MTAwMX0">
+            <div class="tgme_widget_message_bubble">
+              <div class="tgme_widget_msg_text js-message_text" dir="auto">Galaxy S25+ 256GB por <b>R&#036; 3.099,00</b> na <a href="https://amazon.com.br/dp/X">Amazon</a></div>
+              <div class="tgme_widget_message_footer compact js-message_footer">
+                <span class="tgme_widget_message_meta"><time datetime="2026-08-03T19:18:15+00:00" class="time">19:18</time></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tgme_widget_message_wrap js-widget_message_wrap">
+          <div class="tgme_widget_message text_not_supported_wrap js-widget_message" data-post="canalquebrado/1002" data-view="eyJjIjotMSwicCI6MTAwMn0">
+            <div class="tgme_widget_message_bubble">
+              <div class="tgme_widget_msg_text js-message_text" dir="auto">Fone TWS por <b>R&#036; 149,90</b><br/>Cupom no link</div>
+              <div class="tgme_widget_message_footer compact js-message_footer">
+                <span class="tgme_widget_message_meta"><time datetime="2026-08-03T20:02:41+00:00" class="time">20:02</time></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tgme_widget_message_wrap js-widget_message_wrap">
+          <div class="tgme_widget_message text_not_supported_wrap js-widget_message" data-post="canalquebrado/1003" data-view="eyJjIjotMSwicCI6MTAwM30">
+            <div class="tgme_widget_message_bubble">
+              <div class="tgme_widget_msg_text js-message_text" dir="auto">Air Fryer 5L por <b>R&#036; 289,00</b> no <a href="https://mercadolivre.com.br/p/Y">Mercado Livre</a></div>
+              <div class="tgme_widget_message_footer compact js-message_footer">
+                <span class="tgme_widget_message_meta"><time datetime="2026-08-03T21:44:09+00:00" class="time">21:44</time></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </main>
+  </body>
+</html>

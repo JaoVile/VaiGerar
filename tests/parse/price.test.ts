@@ -113,4 +113,25 @@ describe("parsePrices — cupom não é preço", () => {
     const r = parsePrices("por R$ 3.299,00 à vista ou 12x de R$ 274,91");
     expect(r.pricesCents).toEqual([329900]);
   });
+
+  it("rede de segurança: post que é só cupom devolve o cupom em vez de null", () => {
+    // Quando todos os valores são cupom, a rede de segurança devolve os valores
+    // sem filtro em vez de deixar o post sem preço. Isso previne que o filtro
+    // transforme um post com valores num post sem preço.
+    const r = parsePrices("Resgate o cupom de R$ 80");
+    expect(r.priceCents).toBe(8000);
+    expect(r.pricesCents).toEqual([8000]);
+  });
+
+  it("rede de segurança não desliga o filtro quando há preço legítimo", () => {
+    // Quando há um preço legítimo além do cupom, o filtro continua funcionando
+    // e descarta o cupom.
+    const r = parsePrices("cupom R$ 30 OFF na página. VALOR DA OFERTA R$ 3.967");
+    expect(r.priceCents).toBe(396700);
+    expect(r.pricesCents).not.toContain(3000);
+  });
+
+  it("ignora 'código de R$ X'", () => {
+    expect(parsePrices("use o código e ganhe R$ 40. Por R$ 899,00").priceCents).toBe(89900);
+  });
 });

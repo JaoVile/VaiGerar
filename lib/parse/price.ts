@@ -8,7 +8,7 @@ const INSTALLMENT_RE = /\d{1,2}\s*x\s*(?:de\s*)?$/i;
  * curta de propósito: "cupom de R$ 80" casa, mas um post que cita "cupom" num
  * parágrafo e o preço em outro não é afetado.
  */
-const COUPON_BEFORE_RE = /(cupom|desconto|resgate|voucher)[^.\n]{0,14}$/i;
+const COUPON_BEFORE_RE = /(cupom|desconto|resgate|voucher|c[oó]digo)[^.\n]{0,14}$/i;
 /** "R$ 30 OFF" — o marcador vem DEPOIS do valor. */
 const COUPON_AFTER_RE = /^\s*(off|de desconto)\b/i;
 
@@ -86,22 +86,37 @@ export function parsePrices(html: string): {
   priceCents: number | null;
 } {
   const text = htmlToText(html);
-  const found: number[] = [];
+
+  // Rede de segurança: calcula dois conjuntos — com e sem filtro de cupom.
+  // Se o filtro de cupom zera o resultado mas há preços sem o filtro,
+  // usa os preços sem filtro. Isso previne que o filtro transforme um post
+  // com preço num post sem preço.
+  const foundWithCouponFilter: number[] = [];
+  const foundWithoutCouponFilter: number[] = [];
 
   for (const match of text.matchAll(PRICE_RE)) {
     const at = match.index ?? 0;
     const before = text.slice(Math.max(0, at - 24), at);
     if (INSTALLMENT_RE.test(before)) continue;
-    if (COUPON_BEFORE_RE.test(before)) continue;
 
     const after = text.slice(at + match[0].length, at + match[0].length + 16);
-    if (COUPON_AFTER_RE.test(after)) continue;
 
     const cents = toCents(match[1]);
     if (cents === null) continue;
     if (cents < MIN_PRICE_CENTS || cents > MAX_PRICE_CENTS) continue;
-    found.push(cents);
+
+    // Adiciona ao conjunto sem filtro de cupom
+    foundWithoutCouponFilter.push(cents);
+
+    // Descarta cupom para o conjunto com filtro
+    if (COUPON_BEFORE_RE.test(before)) continue;
+    if (COUPON_AFTER_RE.test(after)) continue;
+
+    foundWithCouponFilter.push(cents);
   }
+
+  // Se o filtro de cupom deixou a lista vazia, volta ao resultado sem filtro
+  const found = foundWithCouponFilter.length > 0 ? foundWithCouponFilter : foundWithoutCouponFilter;
 
   const pricesCents = [...new Set(found)].sort((a, b) => a - b);
   return { pricesCents, priceCents: pricesCents[0] ?? null };

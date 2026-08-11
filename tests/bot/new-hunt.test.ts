@@ -75,4 +75,49 @@ describe("fluxo de nova caça", () => {
     const d = { produto: "s25 plus", alvoCents: 300000, tolerancePct: 10 };
     expect(receber("confirm", d, "não", STATS).proximo).toBe("cancel");
   });
+
+  describe("confirmação — só um conjunto fechado de primeira palavra confirma (fix round 1)", () => {
+    const d = { produto: "s25 plus", alvoCents: 300000, tolerancePct: 10 };
+
+    it('"só um segundo" cancela, não confirma por começar com "s"', () => {
+      expect(receber("confirm", d, "só um segundo", STATS).proximo).toBe("cancel");
+    });
+
+    it('"sei lá" cancela', () => {
+      expect(receber("confirm", d, "sei lá", STATS).proximo).toBe("cancel");
+    });
+
+    it('"isso não, cancela" cancela mesmo "isso" estando no conjunto fechado', () => {
+      expect(receber("confirm", d, "isso não, cancela", STATS).proximo).toBe("cancel");
+    });
+
+    it('"sim, pode criar" confirma', () => {
+      expect(receber("confirm", d, "sim, pode criar", STATS).proximo).toBe("done");
+    });
+
+    it('"SIM" (maiúsculo) confirma', () => {
+      expect(receber("confirm", d, "SIM", STATS).proximo).toBe("done");
+    });
+  });
+
+  describe("estado corrompido não vira caça inventada (fix round 1)", () => {
+    it("ask_tolerance sem alvoCents cancela em vez de assumir faixa 0-0", () => {
+      const r = receber("ask_tolerance", { produto: "s25 plus" }, "10", STATS);
+      expect(r.proximo).toBe("cancel");
+      expect(r.texto.toLowerCase()).toContain("cacar");
+    });
+
+    it("confirm sem produto cancela em vez de confirmar caça sem nome", () => {
+      const r = receber("confirm", { alvoCents: 300000, tolerancePct: 10 }, "sim", STATS);
+      expect(r.proximo).toBe("cancel");
+    });
+  });
+
+  describe("produto vazio não avança o fluxo (fix round 1)", () => {
+    it("mensagem só com espaços continua em ask_product e pede de novo", () => {
+      const r = receber("ask_product", {}, "   ", STATS);
+      expect(r.proximo).toBe("ask_product");
+      expect(r.texto.toLowerCase()).toContain("produto");
+    });
+  });
 });

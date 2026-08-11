@@ -197,6 +197,40 @@ linha de log que valem monitorar, não o comportamento do cursor.
 
 ## Bot do Telegram (Etapa C)
 
+### Primeiro deploy do bot — ordem obrigatória
+
+**Faça nesta ordem.** Cada passo depende do anterior; a seção inteira abaixo
+é referência, não roteiro. O ponto que não pode ser invertido é o 2: o bot só
+pode abrir para o usuário **depois** do reprocessamento de preços.
+
+1. **Rodar a migration `0004_alerts_claimed_at.sql`** no SQL Editor do
+   Supabase (ver "Como rodar uma migration"). Sem a coluna `claimed_at` a
+   entrega de alerta falha em silêncio — o erro fica preso no `try/catch` do
+   tick e o sintoma é "alerta nunca chega", sem nenhum HTTP não-200.
+2. **Reprocessar os preços até o fim**: laço de `POST /api/cron/reprocess?desde=<proximo>`
+   até a resposta trazer `"fim": true` (ver "Reprocessamento de preços de posts
+   antigos" mais abaixo, com o `curl`). **Confira `mudados`/`pulados` do
+   primeiro lote antes de disparar o resto do laço.**
+   **Por que antes de abrir o bot:** os ~15 mil posts já arquivados foram
+   gravados com o parser antigo, que confundia valor de cupom com preço do
+   produto. Enquanto não forem reprocessados, `price_cents` está errado para
+   boa parte do arquivo — e é exatamente esse campo que o `/agora` mostra, que
+   alimenta a mediana ancorando o preço-alvo do `/cacar`, e que o casamento de
+   caça compara contra a faixa. Abrir o bot antes significa a primeira busca
+   do usuário mostrar valor de cupom como se fosse preço, e caça criada em
+   cima de uma mediana falsa. É a primeira impressão do produto, e não dá para
+   desfazer depois.
+3. **Validar com um `/agora` de amostra** (pode ser via `curl` no `sendMessage`
+   ou já com o webhook em ambiente de teste): escolher um produto conhecido e
+   conferir se menor preço e mediana batem com a realidade do mercado. Preço
+   suspeito de "R$ 10,00" para celular é cupom não reprocessado — volte ao
+   passo 2 antes de seguir.
+4. **Configurar as variáveis do bot na Vercel** (`TELEGRAM_BOT_TOKEN_OFERTAS`,
+   `TELEGRAM_WEBHOOK_SECRET`, `ALLOWED_CHAT_IDS`) **e redeployar** — variável
+   nova só vale para deploy feito depois dela.
+5. **Registrar o webhook** com `setWebhook` (ver "Como registrar o webhook").
+   Este é o passo que abre o bot para o usuário; deixe-o por último.
+
 O bot conversacional (`@Vaigerarviubot`) roda como mais uma rota da mesma
 aplicação Next.js — não é um processo separado. Recebe updates do Telegram
 via webhook (`app/api/telegram/webhook/route.ts`), interpreta comandos em
@@ -214,7 +248,7 @@ Mesma regra da tabela acima: só nomes e onde obter, nenhum valor aqui.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN_OFERTAS` | BotFather no Telegram, token do `@Vaigerarviubot` (`/newbot` ou token já existente) | Autentica as chamadas à API do Telegram (`sendMessage`, `answerCallbackQuery`, `setWebhook`) |
 | `TELEGRAM_WEBHOOK_SECRET` | Gerado localmente (ex.: `openssl rand -hex 32`); o mesmo valor precisa estar em três lugares — `.env.local`, env da Vercel e no `secret_token` passado ao `setWebhook` | Comparado contra o header `x-telegram-bot-api-secret-token` em cada requisição recebida no webhook — é o que impede qualquer terceiro de forjar updates |
-| `ALLOWED_CHAT_IDS` | `chat_id` de cada usuário autorizado a falar com o bot (via `@userinfobot` ou `getUpdates`), lista separada por vírgula | Allowlist checada em `autorizado()` (`lib/bot/router.ts`); `parseChatIds()` em `lib/env.ts` faz o split e descarta entradas não numéricas |
+| `ALLOWED_CHAT_IDS` | `chat_id` de cada usuário autorizado a falar com o bot (via `@userinfobot` ou `getUpdates`), lista separada por vírgula | Allowlist checada em `autorizado()` (`lib/bot/router.ts`); `parseChatIds()` em `lib/env.ts` faz o split, **loga um `console.warn` por entrada descartada** e **lança** se nenhuma entrada for um id válido — lista presente e toda inválida é erro de configuração, não "ninguém autorizado" |
 
 `TELEGRAM_BOT_TOKEN_OFERTAS` e `ALLOWED_CHAT_IDS` já apareciam na tabela de
 variáveis lá em cima, reservadas para esta etapa — a partir de agora estão
@@ -266,7 +300,7 @@ abaixo) e o Telegram está reenfileirando.
 | Sintoma | Causa real | O que fazer |
 |---|---|---|
 | **Webhook devolve 401** | `TELEGRAM_WEBHOOK_SECRET` divergente entre a env da Vercel e o `secret_token` passado ao `setWebhook`. A rota (`app/api/telegram/webhook/route.ts`) compara o header `x-telegram-bot-api-secret-token` contra `env.telegramWebhookSecret` e devolve 401 no primeiro descasamento — antes de tocar em qualquer outra coisa | O valor precisa ser **idêntico** nos três lugares: `.env.local`, env da Vercel (com redeploy feito depois de setar) e o `secret_token` da chamada de `setWebhook`. Se algum foi trocado depois, os outros dois ficaram para trás — refaça o `setWebhook` com o valor atual |
-| **Bot fica mudo, sem erro nenhum** | `chat_id` fora de `ALLOWED_CHAT_IDS`. A rota do webhook devolve **200 de propósito** nesse caso (`autorizado()` retorna `false`, e o corpo do `if` que chama `tratar()` simplesmente não roda) — devolver 401 ou 403 faria o Telegram reenfileirar o mesmo update para sempre, então a falha é silenciosa por desenho, não por bug | Confira se o `chat_id` de quem está testando está na lista de `ALLOWED_CHAT_IDS` (lembre que é lista separada por vírgula, sem espaço à parte não faz diferença — `parseChatIds` dá `trim()`) |
+| **Bot fica mudo, sem erro nenhum** | `chat_id` fora de `ALLOWED_CHAT_IDS` — mas confira primeiro o log: `ALLOWED_CHAT_IDS: entrada descartada` (uma linha por entrada que não é número) aponta erro de digitação na variável, e se **nenhuma** entrada for válida `readBotEnv()` lança e o log traz `Bot mal configurado` (o webhook segue devolvendo 200, então o sintoma continua sendo silêncio). Fora esses casos, o chat é mesmo de fora da lista. A rota do webhook devolve **200 de propósito** nesse caso (`autorizado()` retorna `false`, e o corpo do `if` que chama `tratar()` simplesmente não roda) — devolver 401 ou 403 faria o Telegram reenfileirar o mesmo update para sempre, então a falha é silenciosa por desenho, não por bug | Confira se o `chat_id` de quem está testando está na lista de `ALLOWED_CHAT_IDS` (lembre que é lista separada por vírgula, sem espaço à parte não faz diferença — `parseChatIds` dá `trim()`) |
 | **Comandos respondem, mas alerta nunca chega** | A migration `0004_alerts_claimed_at.sql` não foi aplicada — falta a coluna `claimed_at` em `alerts`. `processarAlertas` (`lib/cron/alerts.ts`) usa essa coluna no `select` e no `.or()` do lease de claim; sem ela, a query falha. O erro fica **contido no `try/catch`** de `/api/cron/tick` em volta de `processarAlertas` — é logado, mas não interrompe a rota, então o tick continua devolvendo 200 e a coleta segue normal. É por isso que não aparece como "erro" nenhum lugar óbvio | Rode a migration `0004` no SQL Editor do Supabase (ver seção seguinte) |
 | **Caça criada que nunca dispara** | `terms_none` contém alguma palavra que também está em `terms_any` — e `casa()` (`lib/hunts/match.ts`) checa o veto (`termsNone`) **antes** dos termos obrigatórios (`termsAny`): se as duas listas tiverem sobreposição, a condição de veto sempre bate primeiro e a caça nunca casa com nenhum post, para sempre, sem erro nenhum | `criarHunt` (`lib/bot/hunts-repo.ts`) já filtra isso: `proibidosPara()` remove da lista padrão de proibidos (capa, película, carregador, cabo, suporte, seminovo etc.) qualquer palavra que apareça no próprio produto buscado — então uma caça criada pelo fluxo normal do bot não cai nessa. O risco é caça inserida direto por SQL manual, sem passar por `criarHunt`: confira se `terms_none` e `terms_any` não compartilham nenhum termo |
 

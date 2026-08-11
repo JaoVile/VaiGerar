@@ -1,6 +1,7 @@
-# Pendências conhecidas — Etapa A
+# Pendências conhecidas
 
-Levantadas nas revisões de código da Etapa A e deliberadamente adiadas. Nenhuma
+Levantadas nas revisões de código (Etapa A, e depois Etapa C) e
+deliberadamente adiadas. Nenhuma
 bloqueia a operação; estão aqui para não serem redescobertas do zero.
 
 ## Precisa de ação humana
@@ -48,6 +49,24 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
 - **User-Agent se passa por Chrome** (`lib/collector/fetch.ts`). Um identificador
   próprio com forma de contato seria mais honesto e não muda nada tecnicamente.
   (`https://t.me/robots.txt` devolve 404 — não há diretiva sendo desobedecida.)
+
+## Etapa C — bot e alertas
+
+- **Entrega duplicada de alerta: o gatilho realista é _timeout do tick_, não
+  crash.** O comentário original do lease em `lib/cron/alerts.ts` falava em
+  "crash", e isso subestima o risco: o lease é de **2 minutos** e o tick roda a
+  cada **5**, então uma linha órfã de um tick que morreu no meio está sempre
+  livre para reivindicação no tick seguinte — e se o `sendMessage` daquele tick
+  chegou a completar antes da morte, o usuário recebe o mesmo alerta duas
+  vezes. Crash de função na Vercel é raro; estourar o `maxDuration` de 60s não
+  é: o tick faz `ingestAll` dos canais **e** até 5 entregas cujo timeout
+  individual é de 15s, e desde a correção do 429 as entregas para o mesmo chat
+  são serializadas (o pior caso teórico, 5 × 15s, já não cabe nos 60s). O
+  desenho está certo na prioridade — perder alerta é pior que repetir alerta —
+  mas o número está frouxo. Saídas, quando incomodar: lease maior que o
+  intervalo do tick (ex.: 6 min), ou gravar `sent_at` **antes** do envio
+  (troca duplicata por perda), ou uma guarda de prazo que pare de iniciar
+  envios novos perto do fim do orçamento da função.
 
 ## Avaliado e descartado
 

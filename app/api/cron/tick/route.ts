@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { processarAlertas } from "@/lib/cron/alerts";
 import { assertCronAuth } from "@/lib/cron/auth";
 import { type IngestReport, ingestAll, summarize } from "@/lib/cron/ingest";
 import { createDb } from "@/lib/db/client";
-import { readEnv } from "@/lib/env";
+import { readBotEnv, readEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,5 +44,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ...summary, reports }, { status: 500 });
   }
 
-  return NextResponse.json({ ...summary, reports });
+  let alertas = { casados: 0, enviados: 0, falhos: 0 };
+  try {
+    alertas = await processarAlertas(createDb(), readBotEnv().telegramBotToken, new Date());
+  } catch (e) {
+    console.error("Falha ao processar alertas:", e instanceof Error ? e.message : e);
+  }
+
+  return NextResponse.json({ ...summary, reports, alertas });
 }

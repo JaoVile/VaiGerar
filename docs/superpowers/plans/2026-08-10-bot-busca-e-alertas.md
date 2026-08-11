@@ -1303,13 +1303,24 @@ export async function limparSessao(db: SupabaseClient, chatId: number): Promise<
 
 ```ts
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { variantes } from "@/lib/hunts/terms";
+import { normalizar, variantes } from "@/lib/hunts/terms";
 
 /** Termos que quase sempre indicam acessório ou item usado, não o produto. */
 const PROIBIDOS_PADRAO = [
   "capa", "pelicula", "película", "carregador", "cabo", "suporte",
   "seminovo", "semi-novo", "recondicionado", "vitrine", "usado",
 ];
+
+/**
+ * Remove da lista de proibidos qualquer palavra que apareça no próprio produto.
+ * Sem isso, `/cacar cabo usb-c` nasce com "cabo" em terms_any E em terms_none —
+ * e como `casa()` checa o veto ANTES dos obrigatórios, a caça nunca dispara,
+ * para sempre, sem erro nenhum.
+ */
+function proibidosPara(produto: string): string[] {
+  const alvo = normalizar(produto);
+  return PROIBIDOS_PADRAO.filter((p) => !alvo.includes(normalizar(p)));
+}
 
 export async function criarHunt(
   db: SupabaseClient,
@@ -1323,7 +1334,7 @@ export async function criarHunt(
     label: produto,
     query: produto,
     terms_any: variantes(produto),
-    terms_none: PROIBIDOS_PADRAO,
+    terms_none: proibidosPara(produto),
     target_cents: alvoCents,
     tolerance_pct: tolerancePct,
   });
@@ -1407,7 +1418,8 @@ export async function tratar(
     return;
   }
 
-  const comando = texto.trim().split(/\s+/)[0].toLowerCase();
+  const limpo = texto.trim();
+  const comando = limpo.split(/\s+/)[0].toLowerCase();
 
   if (comando === "/ajuda" || comando === "/start") {
     await limparSessao(db, chatId);
@@ -1440,7 +1452,7 @@ export async function tratar(
   }
 
   if (comando === "/agora") {
-    const termo = texto.slice(comando.length).trim();
+    const termo = limpo.slice(comando.length).trim();
     if (!termo) {
       await sendMessage(token, chatId, "Use assim: <code>/agora air fryer</code>");
       return;
@@ -1495,7 +1507,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  const env = readBotEnv();
+  // readBotEnv() lança se faltar variável na Vercel. Fora de try/catch isso vira
+  // 500, e o Telegram reenvia o mesmo update para sempre — laço infinito.
+  let env: ReturnType<typeof readBotEnv>;
+  try {
+    env = readBotEnv();
+  } catch (e) {
+    console.error("Bot mal configurado:", e instanceof Error ? e.message : e);
+    return NextResponse.json({ ok: true });
+  }
 
   if (req.headers.get("x-telegram-bot-api-secret-token") !== env.telegramWebhookSecret) {
     return NextResponse.json({ error: "não autorizado" }, { status: 401 });
@@ -1535,9 +1555,8 @@ git commit -m "feat(bot): sessoes, router de comandos e rota de webhook"
 ### Task 9: Alertas dentro do tick
 
 **Files:**
-- Create: `lib/cron/alerts.ts`, `tests/cron/alerts.test.ts`
+- Create: `lib/cron/alerts.ts`, `tests/cron/alerts.test.ts`, `app/api/cron/reprocess/route.ts`
 - Modify: `app/api/cron/tick/route.ts`
-- Create: `supabase/migrations/0004_reprocessa_precos.sql`
 
 **Interfaces:**
 - Consumes: `casa`, `Hunt` de `lib/hunts/match.ts`; `sendMessage` de `lib/telegram.ts`; `formatBRL` de `lib/bot/format.ts`
@@ -1701,6 +1720,19 @@ export async function processarAlertas(
   let enviados = 0;
   let falhos = 0;
   for (const a of pendentes ?? []) {
+    // Claim atômico: incrementa attempts condicionando ao valor que acabamos de
+    // ler. Se outro tick já pegou esta linha, o filtro não casa, nada volta, e
+    // pulamos. Sem isso, dois ticks sobrepostos entregam a MESMA mensagem duas
+    // vezes — envio de Telegram não é idempotente, diferente do resto do coletor.
+    const { data: claim } = await db
+      .from("alerts")
+      .update({ attempts: ((a.attempts as number) ?? 0) + 1 })
+      .eq("id", a.id)
+      .is("sent_at", null)
+      .eq("attempts", (a.attempts as number) ?? 0)
+      .select("id");
+    if (!claim || claim.length === 0) continue;
+
     try {
       const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
       const { data: pRow } = await db
@@ -1724,11 +1756,8 @@ export async function processarAlertas(
       enviados++;
     } catch (e) {
       falhos++;
+      // attempts já foi incrementado no claim; não incrementa de novo.
       console.error("Falha ao entregar alerta:", e instanceof Error ? e.message : e);
-      await db
-        .from("alerts")
-        .update({ attempts: ((a.attempts as number) ?? 0) + 1 })
-        .eq("id", a.id);
     }
   }
 
@@ -1756,30 +1785,89 @@ E inclua `alertas` no JSON de resposta. Importa que esse `try/catch` seja separa
 Run: `pnpm test && pnpm exec tsc --noEmit && pnpm build`
 Expected: os três passam
 
-- [ ] **Step 6: Migration que reprocessa os preços errados**
+- [ ] **Step 6: Rota que reprocessa os preços com o parser atual**
 
-`supabase/migrations/0004_reprocessa_precos.sql` — a correção da Task 2 vale para posts novos; os já gravados com valor de cupom continuam errados e contaminam a mediana. Como o parser vive no TypeScript, o SQL só marca os suspeitos para reprocessamento futuro; a limpeza barata é apagar o preço obviamente incorreto:
+A correção da Task 2 vale para posts novos; os ~15 mil já gravados mantêm o preço
+de cupom e continuam contaminando a mediana.
 
-```sql
--- Posts cujo preço registrado é um valor de cupom: o texto menciona cupom/OFF
--- perto de um valor pequeno, e existe outro preço bem maior no mesmo post.
--- Zerar price_cents é preferível a manter valor errado: a busca ignora post
--- sem preço, e a mediana deixa de ser contaminada.
-update posts
-set price_cents = null
-where price_cents is not null
-  and price_cents < 50000
-  and array_length(prices_cents, 1) > 1
-  and (prices_cents)[array_length(prices_cents, 1)] > price_cents * 10
-  and text ~* '(cupom|desconto|resgate|off)';
+**Não faça isso em SQL.** Uma condição como `text ~* '(cupom|desconto|off)'` não
+tem noção de proximidade com o valor — `off` casa dentro de "coffee", e
+`price_cents < 50000` com um preço muito maior no mesmo post descreve qualquer
+oferta legítima de "de R$X por R$Y", que é o achado mais valioso do arquivo.
+Heurística de texto não vai reproduzir o parser.
+
+Reprocesse com o **próprio `parsePrices`**, que é a única fonte de verdade. Crie
+`app/api/cron/reprocess/route.ts`, autenticada como as outras rotas de cron:
+
+```ts
+import { NextResponse } from "next/server";
+import { assertCronAuth } from "@/lib/cron/auth";
+import { createDb } from "@/lib/db/client";
+import { readEnv } from "@/lib/env";
+import { parsePrices } from "@/lib/parse/price";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const LOTE = 500;
+
+export async function POST(req: Request) {
+  try {
+    assertCronAuth(req, readEnv().cronSecret);
+  } catch {
+    return NextResponse.json({ error: "não autorizado" }, { status: 401 });
+  }
+
+  const desde = Number(new URL(req.url).searchParams.get("desde") ?? "0");
+  const db = createDb();
+
+  const { data, error } = await db
+    .from("posts")
+    .select("id,text,price_cents,prices_cents")
+    .gt("id", desde)
+    .order("id", { ascending: true })
+    .limit(LOTE);
+  if (error) {
+    console.error("Reprocessando preços:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const linhas = data ?? [];
+  let mudados = 0;
+  for (const p of linhas) {
+    const novo = parsePrices(p.text as string);
+    if (novo.priceCents === (p.price_cents as number | null)) continue;
+    const { error: upErr } = await db
+      .from("posts")
+      .update({ price_cents: novo.priceCents, prices_cents: novo.pricesCents })
+      .eq("id", p.id);
+    if (upErr) throw new Error(`Atualizando post ${p.id}: ${upErr.message}`);
+    mudados++;
+  }
+
+  const ultimo = linhas.length > 0 ? (linhas[linhas.length - 1].id as number) : desde;
+  return NextResponse.json({
+    lidos: linhas.length,
+    mudados,
+    proximo: ultimo,
+    fim: linhas.length < LOTE,
+  });
+}
 ```
 
-Rode no SQL Editor e confira o número de linhas afetadas.
+Cursor por `id` com `?desde=` deixa o reprocessamento retomável e sem ler o arquivo
+inteiro numa invocação. Rode em laço até `fim: true`, guardando o `proximo` de cada
+resposta. Como `parsePrices` é determinística, rodar duas vezes no mesmo lote não
+muda nada — é seguro repetir.
+
+Antes de rodar em tudo, **rode um lote e confira o que mudou** consultando alguns
+posts afetados: o preço novo deve ser o do produto, não o do cupom. Se algum preço
+legítimo virar `null`, pare e reporte em vez de continuar.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/cron/alerts.ts tests/cron/alerts.test.ts app/api/cron/tick/route.ts supabase/migrations/0004_reprocessa_precos.sql
+git add lib/cron/alerts.ts tests/cron/alerts.test.ts app/api/cron/tick/route.ts app/api/cron/reprocess
 git commit -m "feat(cron): casa cacas e entrega alertas dentro do tick"
 ```
 

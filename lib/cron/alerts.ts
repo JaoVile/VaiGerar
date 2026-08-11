@@ -15,6 +15,20 @@ export type AlertPost = {
 const MAX_TENTATIVAS = 5;
 /** Quantos posts recentes o casamento examina por tick. */
 const JANELA_POSTS = 500;
+/**
+ * Quantos alertas pendentes o tick tenta entregar. Baixo de propósito: cada
+ * item é claim + 2 selects + `sendMessage` (timeout 15s) + 2 updates, todos
+ * em paralelo — 10 concorrentes mantém o pior caso bem dentro do
+ * `maxDuration` de 60s da rota, mesmo com `ingestAll` já tendo gasto parte do
+ * orçamento. O que sobrar fica para o próximo tick, 5 minutos depois.
+ */
+const LOTE_ENVIO = 10;
+/**
+ * Prazo do lease de claim, em ms. Um tick que reivindica uma linha e morre
+ * no meio (crash, timeout de função) libera a linha depois deste prazo, sem
+ * precisar de intervenção manual.
+ */
+const LEASE_MS = 2 * 60 * 1000;
 
 export function formatAlerta(hunt: Hunt, post: AlertPost): string {
   const abaixo = Math.round((1 - post.priceCents / hunt.priceMaxCents) * 100);
@@ -86,61 +100,111 @@ export async function processarAlertas(
     }
   }
 
+  // Lease: uma linha só conta como "livre para reivindicar" se nunca foi
+  // reivindicada ou se o claim anterior é mais velho que LEASE_MS. Isso é o
+  // que falta pro `attempts` sozinho não bastar como trava — dois ticks que
+  // leem a mesma linha (attempts=1, sent_at=null) dentro da janela de um
+  // `sendMessage` em voo (até 15s) reivindicariam com o mesmo `attempts` e
+  // entregariam a mesma mensagem duas vezes.
+  const leaseCutoffIso = new Date(agora.getTime() - LEASE_MS).toISOString();
+  const livre = `claimed_at.is.null,claimed_at.lt.${leaseCutoffIso}`;
+
   const { data: pendentes, error: pendErr } = await db
     .from("alerts")
     .select("id,hunt_id,post_row_id,attempts")
     .is("sent_at", null)
     .lt("attempts", MAX_TENTATIVAS)
-    .limit(30);
+    .or(livre)
+    .limit(LOTE_ENVIO);
   if (pendErr) throw new Error(`Lendo alertas pendentes: ${pendErr.message}`);
+
+  // Cada alerta é independente — paraleliza a entrega (mesmo padrão do
+  // `ingestAll`) pra não estourar o `maxDuration` da rota com envios
+  // sequenciais. `allSettled` porque um item que rejeitar (em vez de
+  // devolver "falho" pelo próprio catch interno) não pode derrubar os outros.
+  const resultados = await Promise.allSettled(
+    (pendentes ?? []).map((a) => processarUmAlerta(db, token, a, agora, leaseCutoffIso)),
+  );
 
   let enviados = 0;
   let falhos = 0;
-  for (const a of pendentes ?? []) {
-    // Claim atômico: incrementa attempts condicionando ao valor que acabamos de
-    // ler. Se outro tick já pegou esta linha, o filtro não casa, nada volta, e
-    // pulamos. Sem isso, dois ticks sobrepostos entregam a MESMA mensagem duas
-    // vezes — envio de Telegram não é idempotente, diferente do resto do coletor.
-    const { data: claim } = await db
-      .from("alerts")
-      .update({ attempts: ((a.attempts as number) ?? 0) + 1 })
-      .eq("id", a.id)
-      .is("sent_at", null)
-      .eq("attempts", (a.attempts as number) ?? 0)
-      .select("id");
-    if (!claim || claim.length === 0) continue;
-
-    try {
-      const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
-      const { data: pRow } = await db
-        .from("posts")
-        .select("id,text,price_cents,store,url,posted_at")
-        .eq("id", a.post_row_id)
-        .single();
-      if (!hRow || !pRow) throw new Error("caça ou post sumiu");
-
-      const hunt = toHunt(hRow);
-      await sendMessage(
-        token,
-        hunt.chatId,
-        formatAlerta(hunt, {
-          rowId: pRow.id as number,
-          text: pRow.text as string,
-          priceCents: pRow.price_cents as number,
-          store: pRow.store as string | null,
-          url: pRow.url as string,
-          postedAt: pRow.posted_at as string,
-        }),
-      );
-      await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
-      await db.from("hunts").update({ last_alert_at: agora.toISOString() }).eq("id", hunt.id);
-      enviados++;
-    } catch (e) {
+  for (const r of resultados) {
+    if (r.status === "fulfilled") {
+      if (r.value === "enviado") enviados++;
+      else if (r.value === "falho") falhos++;
+      // "pulado" (não conseguiu o claim) não conta em nenhum dos dois.
+    } else {
       falhos++;
-      // attempts já foi incrementado no claim; não incrementa de novo.
-      console.error("Falha ao entregar alerta:", e instanceof Error ? e.message : e);
+      console.error("Falha inesperada ao processar alerta:", r.reason);
     }
   }
 
   return { casados, enviados, falhos };
+}
+
+type ResultadoAlerta = "enviado" | "falho" | "pulado";
+
+async function processarUmAlerta(
+  db: SupabaseClient,
+  token: string,
+  a: {
+    id: number;
+    hunt_id: string;
+    post_row_id: number;
+    attempts: number | null;
+  },
+  agora: Date,
+  leaseCutoffIso: string,
+): Promise<ResultadoAlerta> {
+  // Claim atômico com lease: incrementa attempts e grava claimed_at,
+  // condicionado ao attempts que acabamos de ler E à linha estar livre
+  // (claimed_at nulo ou vencido). Se outro tick já reivindicou, nenhuma
+  // condição casa, nada volta, e pulamos.
+  const { data: claim, error: claimErr } = await db
+    .from("alerts")
+    .update({
+      attempts: (a.attempts ?? 0) + 1,
+      claimed_at: agora.toISOString(),
+    })
+    .eq("id", a.id)
+    .is("sent_at", null)
+    .eq("attempts", a.attempts ?? 0)
+    .or(`claimed_at.is.null,claimed_at.lt.${leaseCutoffIso}`)
+    .select("id");
+  if (claimErr) {
+    console.error("Falha ao reivindicar alerta:", claimErr.message);
+    return "falho";
+  }
+  if (!claim || claim.length === 0) return "pulado";
+
+  try {
+    const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
+    const { data: pRow } = await db
+      .from("posts")
+      .select("id,text,price_cents,store,url,posted_at")
+      .eq("id", a.post_row_id)
+      .single();
+    if (!hRow || !pRow) throw new Error("caça ou post sumiu");
+
+    const hunt = toHunt(hRow);
+    await sendMessage(
+      token,
+      hunt.chatId,
+      formatAlerta(hunt, {
+        rowId: pRow.id as number,
+        text: pRow.text as string,
+        priceCents: pRow.price_cents as number,
+        store: pRow.store as string | null,
+        url: pRow.url as string,
+        postedAt: pRow.posted_at as string,
+      }),
+    );
+    await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
+    await db.from("hunts").update({ last_alert_at: agora.toISOString() }).eq("id", hunt.id);
+    return "enviado";
+  } catch (e) {
+    // attempts já foi incrementado no claim; não incrementa de novo.
+    console.error("Falha ao entregar alerta:", e instanceof Error ? e.message : e);
+    return "falho";
+  }
 }

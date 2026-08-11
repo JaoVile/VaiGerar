@@ -26,13 +26,15 @@ export type Entrada = { chatId: number; texto: string; callbackId?: string };
 export function extrairEntrada(u: Update): Entrada | null {
   const cb = u?.callback_query;
   const cbChatId = cb?.message?.chat?.id;
-  if (cbChatId !== undefined && cb?.data) {
+  // `data` vem de `req.json() as Update` — um cast sem checagem em runtime.
+  // Truthiness não basta: `data` numérico é truthy e não tem `.startsWith`.
+  if (cbChatId !== undefined && typeof cb?.data === "string" && cb.data) {
     const texto = cb.data.startsWith("tol:") ? cb.data.slice(4) : cb.data;
     return { chatId: cbChatId, texto, callbackId: cb.id };
   }
   const m = u?.message;
   const mChatId = m?.chat?.id;
-  if (mChatId !== undefined && m?.text) {
+  if (mChatId !== undefined && typeof m?.text === "string" && m.text) {
     return { chatId: mChatId, texto: m.text, callbackId: undefined };
   }
   return null;

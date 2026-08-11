@@ -50,6 +50,26 @@ describe("extrairEntrada", () => {
     });
     expect(r).toBeNull();
   });
+
+  it("devolve null para callback_query.data numérico, sem lançar", () => {
+    const r = extrairEntrada({
+      callback_query: {
+        id: "1",
+        data: 123,
+        message: { chat: { id: 7 } },
+      } as unknown as Parameters<typeof extrairEntrada>[0]["callback_query"],
+    });
+    expect(r).toBeNull();
+  });
+
+  it("devolve null para message.text numérico, sem lançar", () => {
+    const r = extrairEntrada({
+      message: { chat: { id: 7 }, text: 123 } as unknown as Parameters<
+        typeof extrairEntrada
+      >[0]["message"],
+    });
+    expect(r).toBeNull();
+  });
 });
 
 describe("autorizado", () => {

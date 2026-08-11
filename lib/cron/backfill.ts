@@ -4,7 +4,14 @@ import { countPostAnchors, type ParsedPost, parseChannelPage } from "@/lib/colle
 import { savePosts } from "@/lib/db/posts";
 import type { ChannelRow } from "@/lib/db/types";
 
-export const BACKFILL_MONTHS = 6;
+/**
+ * Janela-alvo do backfill. Precisa andar junto com `MESES_PADRAO`
+ * (`lib/search/query.ts`) e `PURGE_MONTHS` (`lib/cron/purge.ts`): se esta
+ * ficar maior que a janela de retenção da purga, o backfill baixa do `t.me`
+ * posts que a purga apaga em seguida — os dois brigando pra sempre, gastando
+ * requisição à toa contra um serviço de terceiro.
+ */
+export const BACKFILL_MONTHS = 3;
 
 /** Razão de parada que significa quebra, não fim de arquivo. */
 export const PARSER_BROKEN = "parser quebrado";

@@ -131,6 +131,8 @@ export type QueryFakeRespostas = {
   update?: Record<string, Linhas>;
   /** Linhas devolvidas por `from(tabela).upsert(...).select(...)`. */
   upsert?: Record<string, Linhas>;
+  /** Linhas devolvidas por `from(tabela).delete().select(...)`. */
+  delete?: Record<string, Linhas>;
   /** Erro por (op, tabela), ex.: `{ "update:alerts": "boom" }`. */
   erros?: Record<string, string>;
 };
@@ -172,7 +174,10 @@ export function createQueryFake(respostas: QueryFakeRespostas = {}): QueryFake {
   const queries: RecordedQuery[] = [];
 
   function box(q: RecordedQuery, linhas: Linhas, erro: string | null) {
-    const resultado = { data: linhas, error: erro === null ? null : { message: erro } };
+    const resultado = {
+      data: linhas,
+      error: erro === null ? null : { message: erro },
+    };
     // biome-ignore lint/suspicious/noExplicitAny: fake de query builder encadeável
     const b: any = Promise.resolve(resultado);
     for (const m of METODOS_CADEIA) {
@@ -208,7 +213,9 @@ export function createQueryFake(respostas: QueryFakeRespostas = {}): QueryFake {
             ? respostas.update
             : op === "upsert"
               ? respostas.upsert
-              : undefined;
+              : op === "delete"
+                ? respostas.delete
+                : undefined;
       return box(q, fonte?.[table] ?? [], respostas.erros?.[`${op}:${table}`] ?? null);
     };
     return {

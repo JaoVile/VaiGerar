@@ -1,4 +1,4 @@
-import type { SearchResult } from "@/lib/search/query";
+import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
 import { escapeHtml } from "@/lib/telegram";
 
 export function formatBRL(cents: number): string {
@@ -16,11 +16,11 @@ function primeiraLinha(texto: string, max = 70): string {
 
 export function formatSearch(r: SearchResult): string {
   if (!r.stats || r.melhores.length === 0) {
-    return `Não achei nada para <b>${escapeHtml(r.termo)}</b> nos últimos 6 meses.\n\nTente um termo mais curto — "air fryer" acha mais que "air fryer 5 litros inox".`;
+    return `Não achei nada para <b>${escapeHtml(r.termo)}</b> nos últimos ${MESES_PADRAO} meses.\n\nTente um termo mais curto — "air fryer" acha mais que "air fryer 5 litros inox".`;
   }
 
   const linhas = [
-    `🔎 <b>${escapeHtml(r.termo)}</b> — ${r.stats.count} ofertas nos últimos 6 meses`,
+    `🔎 <b>${escapeHtml(r.termo)}</b> — ${r.stats.count} ofertas nos últimos ${MESES_PADRAO} meses`,
     `menor ${formatBRL(r.stats.minCents)} · mediana <b>${formatBRL(r.stats.medianCents)}</b> · maior ${formatBRL(r.stats.maxCents)}`,
     "",
   ];

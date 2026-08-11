@@ -1,6 +1,7 @@
 import { formatBRL } from "@/lib/bot/format";
 import { faixaDe } from "@/lib/hunts/match";
 import { normalizar } from "@/lib/hunts/terms";
+import { MESES_PADRAO } from "@/lib/search/query";
 import type { PriceStats } from "@/lib/search/stats";
 import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
@@ -83,7 +84,7 @@ export function receber(
       };
     }
     const contexto = stats
-      ? `Achei <b>${stats.count}</b> ofertas nos últimos 6 meses.\nMenor ${formatBRL(stats.minCents)} · mediana <b>${formatBRL(stats.medianCents)}</b>.`
+      ? `Achei <b>${stats.count}</b> ofertas nos últimos ${MESES_PADRAO} meses.\nMenor ${formatBRL(stats.minCents)} · mediana <b>${formatBRL(stats.medianCents)}</b>.`
       : "Não achei histórico desse produto ainda — o arquivo cresce todo dia, então isso melhora.";
     return {
       texto: `${contexto}\n\nQuanto você quer pagar?`,

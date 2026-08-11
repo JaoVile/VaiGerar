@@ -29,9 +29,10 @@ Dois jobs, ambos `POST`, com header `x-cron-secret: <valor de CRON_SECRET>`:
 |---|---|---|
 | `/api/cron/tick` | a cada 5 min | coleta incremental por canal (`ingestAll`); acende o canário (ver abaixo) se **todos** os canais devolverem zero posts na mesma rodada |
 | `/api/cron/backfill` | a cada 10 min | avança uma página por canal por invocação, deliberadamente devagar pra não martelar o `t.me`; vira no-op quando `backfill_complete = true` em todos os canais |
+| `/api/cron/purge` | a cada X min (a definir no agendamento) | apaga em lotes os posts mais velhos que a janela de retenção — ver "Purga rolante de 3 meses" abaixo |
 
 Pendente (fora do escopo desta task, exige login interativo do humano):
-agendar os dois jobs no cron-job.org e configurar as env vars + deploy na
+agendar os jobs no cron-job.org e configurar as env vars + deploy na
 Vercel.
 
 ## Como rodar uma migration
@@ -340,6 +341,67 @@ nenhum (`priceCents: null`) num post que antes tinha um valor salvo. A rota
 operador, não efeito colateral silencioso do reprocessamento. Um `pulados`
 alto pode ser regressão do parser (investigar) ou só post atípico sem preço
 de verdade no texto (esperado, nada a fazer).
+
+## Purga rolante de 3 meses (`/api/cron/purge`)
+
+**Por que existe:** `posts` cresce ~415 linhas/dia. O free tier do Supabase
+comporta cerca de 365 mil linhas no total do projeto. Em vez de deixar o
+arquivo crescer até bater no teto (e então lidar com upgrade de plano ou
+corte de emergência), a decisão foi manter o arquivo **pequeno de
+propósito**: a purga apaga rotineiramente o que passou da janela de
+retenção, estabilizando `posts` em torno de ~37 mil linhas (~10% do teto do
+free tier) em vez de crescer sem fim.
+
+**A janela é 3 meses, e três constantes precisam concordar nela:**
+
+| Constante | Arquivo | Papel |
+|---|---|---|
+| `MESES_PADRAO` | `lib/search/query.ts` | até onde `/agora` e `/cacar` buscam no arquivo |
+| `BACKFILL_MONTHS` | `lib/cron/backfill.ts` | até onde o backfill baixa histórico do `t.me` |
+| `PURGE_MONTHS` | `lib/cron/purge.ts` | a partir de quando um post é apagado |
+
+**Se alguém for mudar a janela de retenção, as três têm que mudar juntas,
+no mesmo commit.** Descasar qualquer uma quebra o sistema contra si mesmo:
+
+- `PURGE_MONTHS` menor que `MESES_PADRAO` → a busca promete "não achei" para
+  dado que ainda deveria estar lá, mas já foi apagado antes da hora.
+- `BACKFILL_MONTHS` maior que `PURGE_MONTHS` → o backfill baixa do `t.me`
+  posts de além da janela de retenção, e a purga apaga esses mesmos posts
+  logo em seguida — os dois brigando pra sempre, gastando requisição à toa
+  contra um serviço de terceiro que não tem nada a ver com essa decisão
+  interna.
+
+**Como a rota funciona:** `POST /api/cron/purge`, autenticada como as outras
+rotas de cron (header `x-cron-secret`). Cada chamada apaga **um lote** de até
+1000 posts com `posted_at` anterior ao corte (`corteDePurga`, em
+`lib/cron/purge.ts`) e devolve `{ apagados, fim }` — mesmo espírito do `fim`
+de `/api/cron/reprocess`: `fim: true` quando o lote apagou menos que o
+tamanho pedido, sinal de que não sobra mais nada além do corte. O lote existe
+por causa do `maxDuration` de 60s: apagar dezenas de milhares de linhas de
+uma vez numa única invocação arrisca estourar o tempo do request.
+
+```bash
+curl -s -X POST "https://<app>.vercel.app/api/cron/purge" \
+  -H "x-cron-secret: <valor de CRON_SECRET>"
+# repita até "fim": true, se estiver rodando manualmente em vez de agendado
+```
+
+**Efeito cascata em `alerts` — intencional, não um bug de FK:**
+`alerts.post_row_id` referencia `posts(id) on delete cascade`
+(`supabase/migrations/0001_schema.sql`). Apagar um post apaga junto qualquer
+linha de `alerts` que aponte pra ele — inclusive alerta já enviado, que era
+o único registro de "esse post já foi avisado ao usuário". Isso é aceitável
+por desenho: alerta é notificação efêmera (um "já avisei isso"), não registro
+contábil que precise sobreviver ao post que o originou. Quem for investigar
+"por que `alerts` encolheu" deve olhar aqui primeiro, antes de suspeitar de
+alguma outra rotina apagando linha.
+
+**A purga é irreversível e não existe backup.** Não há snapshot, não há
+tabela de arquivamento, não há `soft delete` — o `DELETE` é definitivo assim
+que a rota roda. Se a janela de retenção precisar mudar para trás (por
+exemplo, alguém decidir que precisa de 6 meses de novo), **o histórico já
+apagado não volta**; só o que ainda está dentro da janela no momento da
+mudança continua disponível.
 
 ## Migrations pendentes
 

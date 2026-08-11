@@ -15,7 +15,14 @@ export type SearchResult = {
   melhores: SearchHit[];
 };
 
-const MESES_PADRAO = 6;
+/**
+ * Janela padrão de busca. Precisa andar junto com `BACKFILL_MONTHS`
+ * (`lib/cron/backfill.ts`) e `PURGE_MONTHS` (`lib/cron/purge.ts`): busca,
+ * backfill e purga têm que concordar na mesma janela rolante — buscar além
+ * do que a purga mantém mostraria "não achei" pra dado que na verdade só foi
+ * apagado.
+ */
+export const MESES_PADRAO = 3;
 const LIMITE_PADRAO = 5;
 /**
  * Teto de linhas lidas: a estatística precisa do conjunto casado, mas não do

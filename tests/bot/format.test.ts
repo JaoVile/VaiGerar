@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatAjuda, formatBRL, formatSearch } from "@/lib/bot/format";
+import { MESES_PADRAO } from "@/lib/search/query";
 import { escapeHtml } from "@/lib/telegram";
 
 describe("escapeHtml", () => {
@@ -59,5 +60,23 @@ describe("formatAjuda", () => {
   it("lista os comandos disponíveis", () => {
     const s = formatAjuda();
     for (const cmd of ["/agora", "/cacar", "/cacas", "/ajuda"]) expect(s).toContain(cmd);
+  });
+
+  it("deixa claro que serve para qualquer produto, não só celular", () => {
+    const s = formatAjuda().toLowerCase();
+    expect(s).toContain("qualquer produto");
+    for (const cat of ["cozinha", "móveis", "academia"]) expect(s).toContain(cat);
+  });
+
+  it("explica que a mediana é a régua, não o menor preço", () => {
+    expect(formatAjuda().toLowerCase()).toContain("mediana");
+  });
+
+  it("NÃO promete botão de pausar — só excluir existe", () => {
+    expect(formatAjuda().toLowerCase()).not.toContain("pausar");
+  });
+
+  it("usa a janela real da busca, sem número escrito à mão", () => {
+    expect(formatAjuda()).toContain(`${MESES_PADRAO} meses`);
   });
 });

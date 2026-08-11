@@ -4,7 +4,7 @@ import { formatAjuda, formatBRL, formatSearch } from "@/lib/bot/format";
 import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 import { lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
 import { buscar } from "@/lib/search/query";
-import { answerCallbackQuery, sendMessage } from "@/lib/telegram";
+import { answerCallbackQuery, escapeHtml, sendMessage } from "@/lib/telegram";
 
 export type Update = {
   message?: { chat: { id: number }; text?: string };
@@ -74,7 +74,12 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
       return;
     }
     const linhas = hs.map(
-      (h) => `• <b>${h.label}</b> — ${formatBRL(h.priceMinCents)} a ${formatBRL(h.priceMaxCents)}`,
+      (h) =>
+        // `label` é texto do usuário: um produto como "tv <50 polegadas" faz o
+        // Telegram recusar a mensagem inteira ("can't parse entities") — e como
+        // o botão de excluir vive DENTRO desta mensagem, /cacas ficaria travado
+        // para sempre, sem jeito de apagar a caça que o trava.
+        `• <b>${escapeHtml(h.label)}</b> — ${formatBRL(h.priceMinCents)} a ${formatBRL(h.priceMaxCents)}`,
     );
     await sendMessage(token, chatId, linhas.join("\n"), {
       keyboard: {

@@ -137,6 +137,26 @@ describe("fluxo de nova caça", () => {
     });
   });
 
+  describe("produto com HTML não quebra a confirmação", () => {
+    // Sem escape, o Telegram recusa a mensagem inteira ("can't parse
+    // entities"). Como `salvarSessao` roda ANTES do `sendMessage`, a sessão
+    // avançaria para "confirm" e o usuário nunca veria a pergunta —
+    // conversa morta, sem nem a mensagem de erro fazer sentido.
+    it('escapa "<" e "&" do produto na mensagem de confirmação', () => {
+      const r = receber(
+        "ask_tolerance",
+        { produto: 'tv <50" & cia', alvoCents: 300000 },
+        "10",
+        STATS,
+      );
+      expect(r.proximo).toBe("confirm");
+      expect(r.texto).toContain('tv &lt;50" &amp; cia');
+      expect(r.texto).not.toContain("<50");
+      // o produto guardado no estado continua cru — o escape é de apresentação
+      expect(r.data.produto).toBe('tv <50" & cia');
+    });
+  });
+
   describe("produto vazio não avança o fluxo (fix round 1)", () => {
     it("mensagem só com espaços continua em ask_product e pede de novo", () => {
       const r = receber("ask_product", {}, "   ", STATS);

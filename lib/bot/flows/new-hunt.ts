@@ -2,7 +2,7 @@ import { formatBRL } from "@/lib/bot/format";
 import { faixaDe } from "@/lib/hunts/match";
 import { normalizar } from "@/lib/hunts/terms";
 import type { PriceStats } from "@/lib/search/stats";
-import type { InlineKeyboard } from "@/lib/telegram";
+import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
 export type Step = "ask_product" | "ask_price" | "ask_tolerance" | "confirm";
 export type FlowData = {
@@ -141,7 +141,10 @@ export function receber(
     }
     const f = faixaDe(data.alvoCents, pct);
     return {
-      texto: `Vou caçar <b>${data.produto}</b> entre <b>${formatBRL(f.minCents)}</b> e <b>${formatBRL(f.maxCents)}</b> (±${pct}%).\n\nConfirma? Responda <b>sim</b> ou <b>não</b>.`,
+      // `produto` é texto do usuário. Sem escapar, "tv <50" faz o Telegram
+      // recusar a mensagem: `salvarSessao` já rodou antes do `sendMessage`, a
+      // sessão avança para "confirm" e o usuário nunca vê a pergunta.
+      texto: `Vou caçar <b>${escapeHtml(data.produto)}</b> entre <b>${formatBRL(f.minCents)}</b> e <b>${formatBRL(f.maxCents)}</b> (±${pct}%).\n\nConfirma? Responda <b>sim</b> ou <b>não</b>.`,
       proximo: "confirm",
       data: { ...data, tolerancePct: pct },
     };

@@ -40,7 +40,7 @@ Tabelas `hunts`, `alerts`, `bot_sessions`, `user_settings` já existem (migratio
 
 ---
 
-### Task 1: Variáveis de ambiente do Telegram
+### Task 1: Variáveis de ambiente do bot, em leitor separado
 
 **Files:**
 - Modify: `lib/env.ts`
@@ -48,42 +48,54 @@ Tabelas `hunts`, `alerts`, `bot_sessions`, `user_settings` já existem (migratio
 - Test: `tests/env.test.ts`
 
 **Interfaces:**
-- Produces: `Env` ganha `telegramBotToken: string`, `telegramWebhookSecret: string`, `allowedChatIds: number[]`
+- `readEnv()` e o tipo `Env` **não mudam** — continuam exigindo só `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e `CRON_SECRET`.
+- Produces: `type BotEnv = { telegramBotToken: string; telegramWebhookSecret: string; allowedChatIds: number[] }`; `readBotEnv(source?): BotEnv`
+
+**Por que separado:** `readEnv()` é chamado por `/api/cron/tick`, `/api/cron/backfill` e `lib/db/client.ts`. As rotas de cron fazem `try { assertCronAuth(req, readEnv().cronSecret) } catch { return 401 }` — então uma variável faltando vira 401, indistinguível de segredo errado. Se as variáveis do bot entrassem na mesma lista de obrigatórias, esquecer uma delas na Vercel **pararia a coleta em silêncio**, com o scheduler externo registrando sucesso. O coletor não pode depender do bot.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Acrescente a `tests/env.test.ts` (não altere os testes existentes):
+Acrescente a `tests/env.test.ts`. **Não altere os testes existentes de `readEnv`** — eles continuam válidos, porque `readEnv` não muda.
 
 ```ts
-const COMPLETO = {
-  SUPABASE_URL: "https://x.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "key",
-  CRON_SECRET: "secret",
+import { readBotEnv } from "@/lib/env";
+
+const BOT = {
   TELEGRAM_BOT_TOKEN_OFERTAS: "123:abc",
   TELEGRAM_WEBHOOK_SECRET: "wh",
   ALLOWED_CHAT_IDS: "111,222",
 };
 
-describe("readEnv — telegram", () => {
+describe("readBotEnv", () => {
   it("lê o token e o segredo do webhook", () => {
-    const env = readEnv(COMPLETO);
+    const env = readBotEnv(BOT);
     expect(env.telegramBotToken).toBe("123:abc");
     expect(env.telegramWebhookSecret).toBe("wh");
   });
 
   it("converte ALLOWED_CHAT_IDS em números", () => {
-    expect(readEnv(COMPLETO).allowedChatIds).toEqual([111, 222]);
+    expect(readBotEnv(BOT).allowedChatIds).toEqual([111, 222]);
   });
 
   it("tolera espaços e entradas vazias na lista", () => {
-    expect(readEnv({ ...COMPLETO, ALLOWED_CHAT_IDS: " 111 , ,222 " }).allowedChatIds).toEqual([
+    expect(readBotEnv({ ...BOT, ALLOWED_CHAT_IDS: " 111 , ,222 " }).allowedChatIds).toEqual([
       111, 222,
     ]);
   });
 
-  it("falha nomeando a variável do telegram que falta", () => {
-    const { TELEGRAM_WEBHOOK_SECRET, ...semSegredo } = COMPLETO;
-    expect(() => readEnv(semSegredo)).toThrow(/TELEGRAM_WEBHOOK_SECRET/);
+  it("falha nomeando a variável do bot que falta", () => {
+    const { TELEGRAM_WEBHOOK_SECRET, ...semSegredo } = BOT;
+    expect(() => readBotEnv(semSegredo)).toThrow(/TELEGRAM_WEBHOOK_SECRET/);
+  });
+
+  it("NÃO exige as variáveis do bot em readEnv — o coletor não depende do bot", () => {
+    expect(() =>
+      readEnv({
+        SUPABASE_URL: "https://x.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY: "key",
+        CRON_SECRET: "secret",
+      }),
+    ).not.toThrow();
   });
 });
 ```
@@ -91,26 +103,20 @@ describe("readEnv — telegram", () => {
 - [ ] **Step 2: Rodar e ver falhar**
 
 Run: `pnpm test tests/env.test.ts`
-Expected: FAIL — `telegramBotToken` é `undefined`
+Expected: FAIL — `readBotEnv` não existe
 
 - [ ] **Step 3: Implementar**
 
-Em `lib/env.ts`, estenda o tipo e a lista, e acrescente o parser da lista:
+Em `lib/env.ts`, **mantenha `Env`, `REQUIRED` e `readEnv` exatamente como estão** e acrescente:
 
 ```ts
-export type Env = {
-  supabaseUrl: string;
-  supabaseServiceKey: string;
-  cronSecret: string;
+export type BotEnv = {
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedChatIds: number[];
 };
 
-const REQUIRED = [
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "CRON_SECRET",
+const BOT_REQUIRED = [
   "TELEGRAM_BOT_TOKEN_OFERTAS",
   "TELEGRAM_WEBHOOK_SECRET",
   "ALLOWED_CHAT_IDS",
@@ -124,14 +130,28 @@ function parseChatIds(raw: string): number[] {
     .map(Number)
     .filter((n) => Number.isFinite(n));
 }
-```
 
-E no `return`, acrescente os três campos, usando `parseChatIds(source.ALLOWED_CHAT_IDS as string)`.
+/**
+ * Variáveis do bot, lidas à parte de propósito: o coletor roda sem elas.
+ * Ver a justificativa no cabeçalho da Task 1 do plano.
+ */
+export function readBotEnv(source: Record<string, string | undefined> = process.env): BotEnv {
+  const missing = BOT_REQUIRED.filter((k) => !source[k]);
+  if (missing.length > 0) {
+    throw new Error(`Variáveis do bot faltando: ${missing.join(", ")}`);
+  }
+  return {
+    telegramBotToken: source.TELEGRAM_BOT_TOKEN_OFERTAS as string,
+    telegramWebhookSecret: source.TELEGRAM_WEBHOOK_SECRET as string,
+    allowedChatIds: parseChatIds(source.ALLOWED_CHAT_IDS as string),
+  };
+}
+```
 
 - [ ] **Step 4: Rodar e ver passar**
 
 Run: `pnpm test`
-Expected: PASS. Atenção: os testes antigos de `readEnv` passavam objetos com só 3 variáveis e agora vão falhar por variável faltando — **isso é esperado e correto**. Atualize esses testes para usar `COMPLETO`, **sem mudar o que eles verificam** (o teste "falha quando falta variável" continua removendo uma variável e esperando o nome dela no erro).
+Expected: PASS, suíte inteira. Os testes antigos de `readEnv` continuam passando sem alteração — é o sinal de que a separação funcionou.
 
 - [ ] **Step 5: Atualizar o exemplo e commitar**
 
@@ -145,7 +165,7 @@ ALLOWED_CHAT_IDS=
 
 ```bash
 git add lib/env.ts .env.local.example tests/env.test.ts
-git commit -m "feat(env): variaveis do bot do telegram"
+git commit -m "feat(env): leitor separado para as variaveis do bot"
 ```
 
 ---
@@ -1283,13 +1303,24 @@ export async function limparSessao(db: SupabaseClient, chatId: number): Promise<
 
 ```ts
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { variantes } from "@/lib/hunts/terms";
+import { normalizar, variantes } from "@/lib/hunts/terms";
 
 /** Termos que quase sempre indicam acessório ou item usado, não o produto. */
 const PROIBIDOS_PADRAO = [
   "capa", "pelicula", "película", "carregador", "cabo", "suporte",
   "seminovo", "semi-novo", "recondicionado", "vitrine", "usado",
 ];
+
+/**
+ * Remove da lista de proibidos qualquer palavra que apareça no próprio produto.
+ * Sem isso, `/cacar cabo usb-c` nasce com "cabo" em terms_any E em terms_none —
+ * e como `casa()` checa o veto ANTES dos obrigatórios, a caça nunca dispara,
+ * para sempre, sem erro nenhum.
+ */
+function proibidosPara(produto: string): string[] {
+  const alvo = normalizar(produto);
+  return PROIBIDOS_PADRAO.filter((p) => !alvo.includes(normalizar(p)));
+}
 
 export async function criarHunt(
   db: SupabaseClient,
@@ -1303,7 +1334,7 @@ export async function criarHunt(
     label: produto,
     query: produto,
     terms_any: variantes(produto),
-    terms_none: PROIBIDOS_PADRAO,
+    terms_none: proibidosPara(produto),
     target_cents: alvoCents,
     tolerance_pct: tolerancePct,
   });
@@ -1387,7 +1418,8 @@ export async function tratar(
     return;
   }
 
-  const comando = texto.trim().split(/\s+/)[0].toLowerCase();
+  const limpo = texto.trim();
+  const comando = limpo.split(/\s+/)[0].toLowerCase();
 
   if (comando === "/ajuda" || comando === "/start") {
     await limparSessao(db, chatId);
@@ -1420,7 +1452,7 @@ export async function tratar(
   }
 
   if (comando === "/agora") {
-    const termo = texto.slice(comando.length).trim();
+    const termo = limpo.slice(comando.length).trim();
     if (!termo) {
       await sendMessage(token, chatId, "Use assim: <code>/agora air fryer</code>");
       return;
@@ -1469,13 +1501,21 @@ export async function tratar(
 import { NextResponse } from "next/server";
 import { autorizado, extrairEntrada, tratar, type Update } from "@/lib/bot/router";
 import { createDb } from "@/lib/db/client";
-import { readEnv } from "@/lib/env";
+import { readBotEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  const env = readEnv();
+  // readBotEnv() lança se faltar variável na Vercel. Fora de try/catch isso vira
+  // 500, e o Telegram reenvia o mesmo update para sempre — laço infinito.
+  let env: ReturnType<typeof readBotEnv>;
+  try {
+    env = readBotEnv();
+  } catch (e) {
+    console.error("Bot mal configurado:", e instanceof Error ? e.message : e);
+    return NextResponse.json({ ok: true });
+  }
 
   if (req.headers.get("x-telegram-bot-api-secret-token") !== env.telegramWebhookSecret) {
     return NextResponse.json({ error: "não autorizado" }, { status: 401 });
@@ -1515,9 +1555,8 @@ git commit -m "feat(bot): sessoes, router de comandos e rota de webhook"
 ### Task 9: Alertas dentro do tick
 
 **Files:**
-- Create: `lib/cron/alerts.ts`, `tests/cron/alerts.test.ts`
+- Create: `lib/cron/alerts.ts`, `tests/cron/alerts.test.ts`, `app/api/cron/reprocess/route.ts`
 - Modify: `app/api/cron/tick/route.ts`
-- Create: `supabase/migrations/0004_reprocessa_precos.sql`
 
 **Interfaces:**
 - Consumes: `casa`, `Hunt` de `lib/hunts/match.ts`; `sendMessage` de `lib/telegram.ts`; `formatBRL` de `lib/bot/format.ts`
@@ -1681,6 +1720,19 @@ export async function processarAlertas(
   let enviados = 0;
   let falhos = 0;
   for (const a of pendentes ?? []) {
+    // Claim atômico: incrementa attempts condicionando ao valor que acabamos de
+    // ler. Se outro tick já pegou esta linha, o filtro não casa, nada volta, e
+    // pulamos. Sem isso, dois ticks sobrepostos entregam a MESMA mensagem duas
+    // vezes — envio de Telegram não é idempotente, diferente do resto do coletor.
+    const { data: claim } = await db
+      .from("alerts")
+      .update({ attempts: ((a.attempts as number) ?? 0) + 1 })
+      .eq("id", a.id)
+      .is("sent_at", null)
+      .eq("attempts", (a.attempts as number) ?? 0)
+      .select("id");
+    if (!claim || claim.length === 0) continue;
+
     try {
       const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
       const { data: pRow } = await db
@@ -1704,11 +1756,8 @@ export async function processarAlertas(
       enviados++;
     } catch (e) {
       falhos++;
+      // attempts já foi incrementado no claim; não incrementa de novo.
       console.error("Falha ao entregar alerta:", e instanceof Error ? e.message : e);
-      await db
-        .from("alerts")
-        .update({ attempts: ((a.attempts as number) ?? 0) + 1 })
-        .eq("id", a.id);
     }
   }
 
@@ -1723,43 +1772,102 @@ Em `app/api/cron/tick/route.ts`, depois do bloco do canário e antes do `return`
 ```ts
 let alertas = { casados: 0, enviados: 0, falhos: 0 };
 try {
-  alertas = await processarAlertas(createDb(), readEnv().telegramBotToken, new Date());
+  alertas = await processarAlertas(createDb(), readBotEnv().telegramBotToken, new Date());
 } catch (e) {
   console.error("Falha ao processar alertas:", e instanceof Error ? e.message : e);
 }
 ```
 
-E inclua `alertas` no JSON de resposta. Importa que esse `try/catch` seja separado: alerta quebrado não pode impedir a coleta, que é a função principal do tick.
+E inclua `alertas` no JSON de resposta. Importa que esse `try/catch` seja separado: alerta quebrado não pode impedir a coleta, que é a função principal do tick. `readBotEnv()` é chamado **dentro** dele de propósito — se as variáveis do bot faltarem na Vercel, os alertas falham e a coleta continua.
 
 - [ ] **Step 5: Rodar e ver passar**
 
 Run: `pnpm test && pnpm exec tsc --noEmit && pnpm build`
 Expected: os três passam
 
-- [ ] **Step 6: Migration que reprocessa os preços errados**
+- [ ] **Step 6: Rota que reprocessa os preços com o parser atual**
 
-`supabase/migrations/0004_reprocessa_precos.sql` — a correção da Task 2 vale para posts novos; os já gravados com valor de cupom continuam errados e contaminam a mediana. Como o parser vive no TypeScript, o SQL só marca os suspeitos para reprocessamento futuro; a limpeza barata é apagar o preço obviamente incorreto:
+A correção da Task 2 vale para posts novos; os ~15 mil já gravados mantêm o preço
+de cupom e continuam contaminando a mediana.
 
-```sql
--- Posts cujo preço registrado é um valor de cupom: o texto menciona cupom/OFF
--- perto de um valor pequeno, e existe outro preço bem maior no mesmo post.
--- Zerar price_cents é preferível a manter valor errado: a busca ignora post
--- sem preço, e a mediana deixa de ser contaminada.
-update posts
-set price_cents = null
-where price_cents is not null
-  and price_cents < 50000
-  and array_length(prices_cents, 1) > 1
-  and (prices_cents)[array_length(prices_cents, 1)] > price_cents * 10
-  and text ~* '(cupom|desconto|resgate|off)';
+**Não faça isso em SQL.** Uma condição como `text ~* '(cupom|desconto|off)'` não
+tem noção de proximidade com o valor — `off` casa dentro de "coffee", e
+`price_cents < 50000` com um preço muito maior no mesmo post descreve qualquer
+oferta legítima de "de R$X por R$Y", que é o achado mais valioso do arquivo.
+Heurística de texto não vai reproduzir o parser.
+
+Reprocesse com o **próprio `parsePrices`**, que é a única fonte de verdade. Crie
+`app/api/cron/reprocess/route.ts`, autenticada como as outras rotas de cron:
+
+```ts
+import { NextResponse } from "next/server";
+import { assertCronAuth } from "@/lib/cron/auth";
+import { createDb } from "@/lib/db/client";
+import { readEnv } from "@/lib/env";
+import { parsePrices } from "@/lib/parse/price";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const LOTE = 500;
+
+export async function POST(req: Request) {
+  try {
+    assertCronAuth(req, readEnv().cronSecret);
+  } catch {
+    return NextResponse.json({ error: "não autorizado" }, { status: 401 });
+  }
+
+  const desde = Number(new URL(req.url).searchParams.get("desde") ?? "0");
+  const db = createDb();
+
+  const { data, error } = await db
+    .from("posts")
+    .select("id,text,price_cents,prices_cents")
+    .gt("id", desde)
+    .order("id", { ascending: true })
+    .limit(LOTE);
+  if (error) {
+    console.error("Reprocessando preços:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const linhas = data ?? [];
+  let mudados = 0;
+  for (const p of linhas) {
+    const novo = parsePrices(p.text as string);
+    if (novo.priceCents === (p.price_cents as number | null)) continue;
+    const { error: upErr } = await db
+      .from("posts")
+      .update({ price_cents: novo.priceCents, prices_cents: novo.pricesCents })
+      .eq("id", p.id);
+    if (upErr) throw new Error(`Atualizando post ${p.id}: ${upErr.message}`);
+    mudados++;
+  }
+
+  const ultimo = linhas.length > 0 ? (linhas[linhas.length - 1].id as number) : desde;
+  return NextResponse.json({
+    lidos: linhas.length,
+    mudados,
+    proximo: ultimo,
+    fim: linhas.length < LOTE,
+  });
+}
 ```
 
-Rode no SQL Editor e confira o número de linhas afetadas.
+Cursor por `id` com `?desde=` deixa o reprocessamento retomável e sem ler o arquivo
+inteiro numa invocação. Rode em laço até `fim: true`, guardando o `proximo` de cada
+resposta. Como `parsePrices` é determinística, rodar duas vezes no mesmo lote não
+muda nada — é seguro repetir.
+
+Antes de rodar em tudo, **rode um lote e confira o que mudou** consultando alguns
+posts afetados: o preço novo deve ser o do produto, não o do cupom. Se algum preço
+legítimo virar `null`, pare e reporte em vez de continuar.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/cron/alerts.ts tests/cron/alerts.test.ts app/api/cron/tick/route.ts supabase/migrations/0004_reprocessa_precos.sql
+git add lib/cron/alerts.ts tests/cron/alerts.test.ts app/api/cron/tick/route.ts app/api/cron/reprocess
 git commit -m "feat(cron): casa cacas e entrega alertas dentro do tick"
 ```
 

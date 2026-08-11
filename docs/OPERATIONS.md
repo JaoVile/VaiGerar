@@ -194,3 +194,162 @@ linha de log que valem monitorar, não o comportamento do cursor.
   continuará avançando sozinho a cada invocação de `/api/cron/backfill`
   (a cada 10 min, uma vez agendado em produção) até `backfill_complete =
   true` nos dois.
+
+## Bot do Telegram (Etapa C)
+
+### Primeiro deploy do bot — ordem obrigatória
+
+**Faça nesta ordem.** Cada passo depende do anterior; a seção inteira abaixo
+é referência, não roteiro. O ponto que não pode ser invertido é o 2: o bot só
+pode abrir para o usuário **depois** do reprocessamento de preços.
+
+1. **Rodar a migration `0004_alerts_claimed_at.sql`** no SQL Editor do
+   Supabase (ver "Como rodar uma migration"). Sem a coluna `claimed_at` a
+   entrega de alerta falha em silêncio — o erro fica preso no `try/catch` do
+   tick e o sintoma é "alerta nunca chega", sem nenhum HTTP não-200.
+2. **Reprocessar os preços até o fim**: laço de `POST /api/cron/reprocess?desde=<proximo>`
+   até a resposta trazer `"fim": true` (ver "Reprocessamento de preços de posts
+   antigos" mais abaixo, com o `curl`). **Confira `mudados`/`pulados` do
+   primeiro lote antes de disparar o resto do laço.**
+   **Por que antes de abrir o bot:** os ~15 mil posts já arquivados foram
+   gravados com o parser antigo, que confundia valor de cupom com preço do
+   produto. Enquanto não forem reprocessados, `price_cents` está errado para
+   boa parte do arquivo — e é exatamente esse campo que o `/agora` mostra, que
+   alimenta a mediana ancorando o preço-alvo do `/cacar`, e que o casamento de
+   caça compara contra a faixa. Abrir o bot antes significa a primeira busca
+   do usuário mostrar valor de cupom como se fosse preço, e caça criada em
+   cima de uma mediana falsa. É a primeira impressão do produto, e não dá para
+   desfazer depois.
+3. **Validar com um `/agora` de amostra** (pode ser via `curl` no `sendMessage`
+   ou já com o webhook em ambiente de teste): escolher um produto conhecido e
+   conferir se menor preço e mediana batem com a realidade do mercado. Preço
+   suspeito de "R$ 10,00" para celular é cupom não reprocessado — volte ao
+   passo 2 antes de seguir.
+4. **Configurar as variáveis do bot na Vercel** (`TELEGRAM_BOT_TOKEN_OFERTAS`,
+   `TELEGRAM_WEBHOOK_SECRET`, `ALLOWED_CHAT_IDS`) **e redeployar** — variável
+   nova só vale para deploy feito depois dela.
+5. **Registrar o webhook** com `setWebhook` (ver "Como registrar o webhook").
+   Este é o passo que abre o bot para o usuário; deixe-o por último.
+
+O bot conversacional (`@Vaigerarviubot`) roda como mais uma rota da mesma
+aplicação Next.js — não é um processo separado. Recebe updates do Telegram
+via webhook (`app/api/telegram/webhook/route.ts`), interpreta comandos em
+`lib/bot/router.ts` (`/ajuda`, `/agora`, `/cacar`, `/cacas`, texto livre) e
+guarda o estado da conversa de criação de caça em `lib/bot/session.ts`
+(tabela `bot_sessions`, expira em 10 minutos sem uso). A entrega de alerta
+roda dentro do `/api/cron/tick` existente, em `lib/cron/alerts.ts` — não é um
+job novo.
+
+### Variáveis de ambiente do bot
+
+Mesma regra da tabela acima: só nomes e onde obter, nenhum valor aqui.
+
+| Variável | Onde obter | Uso |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN_OFERTAS` | BotFather no Telegram, token do `@Vaigerarviubot` (`/newbot` ou token já existente) | Autentica as chamadas à API do Telegram (`sendMessage`, `answerCallbackQuery`, `setWebhook`) |
+| `TELEGRAM_WEBHOOK_SECRET` | Gerado localmente (ex.: `openssl rand -hex 32`); o mesmo valor precisa estar em três lugares — `.env.local`, env da Vercel e no `secret_token` passado ao `setWebhook` | Comparado contra o header `x-telegram-bot-api-secret-token` em cada requisição recebida no webhook — é o que impede qualquer terceiro de forjar updates |
+| `ALLOWED_CHAT_IDS` | `chat_id` de cada usuário autorizado a falar com o bot (via `@userinfobot` ou `getUpdates`), lista separada por vírgula | Allowlist checada em `autorizado()` (`lib/bot/router.ts`); `parseChatIds()` em `lib/env.ts` faz o split, **loga um `console.warn` por entrada descartada** e **lança** se nenhuma entrada for um id válido — lista presente e toda inválida é erro de configuração, não "ninguém autorizado" |
+
+`TELEGRAM_BOT_TOKEN_OFERTAS` e `ALLOWED_CHAT_IDS` já apareciam na tabela de
+variáveis lá em cima, reservadas para esta etapa — a partir de agora estão
+de fato em uso.
+
+**`readEnv()` e `readBotEnv()` são funções separadas em `lib/env.ts` de
+propósito**, cada uma com sua própria lista de variáveis obrigatórias:
+`readEnv()` exige só `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e
+`CRON_SECRET` — o que o coletor precisa. `readBotEnv()` exige as três
+variáveis do bot acima, e só é chamada dentro das rotas do bot e no trecho
+de alertas do tick. Se faltar uma variável do bot na Vercel, `readBotEnv()`
+lança, mas isso nunca derruba a coleta: o webhook devolve 200 mesmo assim
+(ver abaixo) e, dentro de `/api/cron/tick`, a chamada a `readBotEnv()` está
+dentro do mesmo `try/catch` que envolve `processarAlertas` — o erro é
+logado, `alertas` fica com os contadores zerados, e a resposta da rota
+continua 200 com o resultado normal da ingestão. Bot mal configurado é
+problema do bot, não do coletor.
+
+### Como registrar o webhook
+
+O `setWebhook` precisa ser chamado uma vez (de novo só se o token ou o
+secret mudarem, ou se a URL de deploy mudar). Lendo o token e o secret do
+`.env.local` em vez de colar valor na linha de comando — assim nenhum
+segredo fica no histórico do shell nem em log:
+
+```bash
+TOKEN=$(grep '^TELEGRAM_BOT_TOKEN_OFERTAS=' .env.local | cut -d= -f2-)
+WH=$(grep '^TELEGRAM_WEBHOOK_SECRET=' .env.local | cut -d= -f2-)
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/setWebhook" \
+  -H "content-type: application/json" \
+  -d "{\"url\":\"https://<app>.vercel.app/api/telegram/webhook\",\"secret_token\":\"${WH}\",\"allowed_updates\":[\"message\",\"callback_query\"]}"
+```
+
+Resposta esperada: `{"ok":true,"result":true,...}`.
+
+Para conferir que ficou registrado (sem expor segredo nenhum — a resposta
+de `getWebhookInfo` não devolve o `secret_token`):
+
+```bash
+curl -s "https://api.telegram.org/bot${TOKEN}/getWebhookInfo"
+```
+
+Confira a `url` e o `pending_update_count` — se estiver crescendo em vez de
+ficar baixo, é sinal de que o webhook está devolvendo erro (ver diagnóstico
+abaixo) e o Telegram está reenfileirando.
+
+### Diagnóstico do bot
+
+| Sintoma | Causa real | O que fazer |
+|---|---|---|
+| **Webhook devolve 401** | `TELEGRAM_WEBHOOK_SECRET` divergente entre a env da Vercel e o `secret_token` passado ao `setWebhook`. A rota (`app/api/telegram/webhook/route.ts`) compara o header `x-telegram-bot-api-secret-token` contra `env.telegramWebhookSecret` e devolve 401 no primeiro descasamento — antes de tocar em qualquer outra coisa | O valor precisa ser **idêntico** nos três lugares: `.env.local`, env da Vercel (com redeploy feito depois de setar) e o `secret_token` da chamada de `setWebhook`. Se algum foi trocado depois, os outros dois ficaram para trás — refaça o `setWebhook` com o valor atual |
+| **Bot fica mudo, sem erro nenhum** | `chat_id` fora de `ALLOWED_CHAT_IDS` — mas confira primeiro o log: `ALLOWED_CHAT_IDS: entrada descartada` (uma linha por entrada que não é número) aponta erro de digitação na variável, e se **nenhuma** entrada for válida `readBotEnv()` lança e o log traz `Bot mal configurado` (o webhook segue devolvendo 200, então o sintoma continua sendo silêncio). Fora esses casos, o chat é mesmo de fora da lista. A rota do webhook devolve **200 de propósito** nesse caso (`autorizado()` retorna `false`, e o corpo do `if` que chama `tratar()` simplesmente não roda) — devolver 401 ou 403 faria o Telegram reenfileirar o mesmo update para sempre, então a falha é silenciosa por desenho, não por bug | Confira se o `chat_id` de quem está testando está na lista de `ALLOWED_CHAT_IDS` (lembre que é lista separada por vírgula, sem espaço à parte não faz diferença — `parseChatIds` dá `trim()`) |
+| **Comandos respondem, mas alerta nunca chega** | A migration `0004_alerts_claimed_at.sql` não foi aplicada — falta a coluna `claimed_at` em `alerts`. `processarAlertas` (`lib/cron/alerts.ts`) usa essa coluna no `select` e no `.or()` do lease de claim; sem ela, a query falha. O erro fica **contido no `try/catch`** de `/api/cron/tick` em volta de `processarAlertas` — é logado, mas não interrompe a rota, então o tick continua devolvendo 200 e a coleta segue normal. É por isso que não aparece como "erro" nenhum lugar óbvio | Rode a migration `0004` no SQL Editor do Supabase (ver seção seguinte) |
+| **Alerta chega duplicado, ocasionalmente** | Um tick morreu (em geral por estourar o `maxDuration` de 60s, não crash) depois do `sendMessage` chegar ao Telegram e antes de gravar `sent_at`; o lease de claim (2 min, menor que o intervalo de 5 min do tick) libera a linha e o tick seguinte reenvia. `ORCAMENTO_ENTREGA_MS` (35s, `lib/cron/alerts.ts`) reduz muito a chance disso: `processarAlertas` para de **iniciar** novos envios depois de 35s de processamento e deixa o resto pendente pro próximo tick — o JSON do tick devolve isso em `alertas.adiados`. **Não elimina a causa**: é mitigação de janela, não remove o risco de morte de processo entre o envio e o `sent_at` por outro motivo qualquer, nem garante matematicamente o pior caso absoluto (ingest e o envio em voo no momento do corte, ambos no teto de latência, ainda somam mais que 60s) | Não é um bug pra corrigir — é o trade-off documentado (`docs/FOLLOW-UPS.md`, "Entrega duplicada de alerta"): repetir alerta é preferível a perder. Se a frequência incomodar, as saídas descartadas por ora (reduzir timeout de envio, aumentar o lease) estão registradas no mesmo lugar |
+| **Caça criada que nunca dispara** | `terms_none` contém alguma palavra que também está em `terms_any` — e `casa()` (`lib/hunts/match.ts`) checa o veto (`termsNone`) **antes** dos termos obrigatórios (`termsAny`): se as duas listas tiverem sobreposição, a condição de veto sempre bate primeiro e a caça nunca casa com nenhum post, para sempre, sem erro nenhum | `criarHunt` (`lib/bot/hunts-repo.ts`) já filtra isso: `proibidosPara()` remove da lista padrão de proibidos (capa, película, carregador, cabo, suporte, seminovo etc.) qualquer palavra que apareça no próprio produto buscado — então uma caça criada pelo fluxo normal do bot não cai nessa. O risco é caça inserida direto por SQL manual, sem passar por `criarHunt`: confira se `terms_none` e `terms_any` não compartilham nenhum termo |
+
+### Reprocessamento de preços de posts antigos (`/api/cron/reprocess`)
+
+A Task 2 corrigiu o parser de preço (`lib/parse/price.ts`) para não tratar
+valor de cupom como preço do produto. Essa correção só vale **daqui para a
+frente** — os cerca de 15 mil posts já gravados antes da correção mantêm o
+`price_cents` errado (valor de cupom) até serem reprocessados. É para isso
+que existe `/api/cron/reprocess`: reaplica o parser atual sobre posts já
+salvos e atualiza `price_cents`/`prices_cents` quando o resultado muda.
+
+Autenticada como as outras rotas de cron (header `x-cron-secret`). Roda em
+lotes de 500 posts, em ordem crescente de `id`, e é **retomável por
+cursor**: cada chamada aceita `?desde=<id>` e a resposta devolve `proximo`
+com o `id` do último post lido do lote — passe esse valor como `desde` na
+próxima chamada. `fim: true` na resposta indica que o lote leu menos que
+500 linhas, ou seja, chegou ao fim da tabela.
+
+```bash
+curl -s -X POST "https://<app>.vercel.app/api/cron/reprocess?desde=0" \
+  -H "x-cron-secret: <valor de CRON_SECRET>"
+# repita com desde=<proximo> da resposta anterior, até "fim": true
+```
+
+**Confira o primeiro lote antes de continuar o laço** — olhe `mudados` e
+`pulados` na resposta e, se possível, alguns posts que mudaram, antes de
+disparar as chamadas seguintes em sequência. É a única chance barata de
+pegar um parser que regrediu antes de rodar contra as ~15 mil linhas
+inteiras.
+
+O campo **`pulados`** conta posts em que o parser atual não achou preço
+nenhum (`priceCents: null`) num post que antes tinha um valor salvo. A rota
+**nunca sobrescreve um preço existente com `null`** (`decideReprocesso` em
+`lib/cron/reprocess.ts`) — perder um preço é decisão consciente do
+operador, não efeito colateral silencioso do reprocessamento. Um `pulados`
+alto pode ser regressão do parser (investigar) ou só post atípico sem preço
+de verdade no texto (esperado, nada a fazer).
+
+## Migrations pendentes
+
+A `0004_alerts_claimed_at.sql` (adiciona a coluna `claimed_at` em `alerts`
+e o índice parcial `alerts_pendentes_idx`) **ainda não foi rodada em
+produção** e precisa ser colada manualmente no **SQL Editor do Supabase**,
+seguindo o mesmo processo descrito em "Como rodar uma migration" acima.
+
+Sem ela: `processarAlertas` falha ao consultar `alerts` (a coluna não
+existe), o erro é engolido pelo `try/catch` do `/api/cron/tick` em volta da
+etapa de alertas, e o sintoma observável é exatamente o descrito acima em
+"Comandos respondem, mas alerta nunca chega" — sem nenhum HTTP não-200 para
+apontar o problema.

@@ -9,6 +9,35 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * HTTP 429 do Telegram — "too many requests", com `retry_after` em segundos.
+ * Tem classe própria porque quem chama precisa distinguir *este* erro dos
+ * outros: 429 quer dizer "tenta de novo daqui a pouco", não "essa mensagem é
+ * ruim". Quem conta tentativa (`lib/cron/alerts.ts`) devolve a linha intacta
+ * para a fila em vez de queimar uma das 5 tentativas.
+ */
+export class TelegramRateLimitError extends Error {
+  readonly retryAfterSec: number | null;
+  constructor(metodo: string, retryAfterSec: number | null, corpo: string) {
+    super(
+      `Telegram ${metodo}: HTTP 429 (retry_after=${retryAfterSec ?? "?"}s) ${corpo.slice(0, 200)}`,
+    );
+    this.name = "TelegramRateLimitError";
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+/** Lê `parameters.retry_after` do corpo de erro do Telegram; null se não vier. */
+function lerRetryAfter(corpo: string): number | null {
+  try {
+    const j = JSON.parse(corpo) as { parameters?: { retry_after?: unknown } };
+    const v = j?.parameters?.retry_after;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 async function chamar(token: string, metodo: string, corpo: unknown): Promise<void> {
   const r = await fetch(`https://api.telegram.org/bot${token}/${metodo}`, {
     method: "POST",
@@ -17,7 +46,9 @@ async function chamar(token: string, metodo: string, corpo: unknown): Promise<vo
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!r.ok) {
-    throw new Error(`Telegram ${metodo}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+    const texto = await r.text();
+    if (r.status === 429) throw new TelegramRateLimitError(metodo, lerRetryAfter(texto), texto);
+    throw new Error(`Telegram ${metodo}: HTTP ${r.status} ${texto.slice(0, 200)}`);
   }
 }
 

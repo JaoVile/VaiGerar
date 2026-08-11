@@ -97,6 +97,140 @@ export function createFakeDb(channels: ChannelRow[], options: FakeDbOptions = {}
 }
 
 /**
+ * Fake de `db` mais geral, pra `processarAlertas`.
+ *
+ * O `createFakeDb` acima só cobre o que backfill/ingest usam. O caminho de
+ * alerta é outro bicho: encadeia `.is()`, `.lt()`, `.or()`, `.gte()`,
+ * `.not()`, `.order()`, `.limit()`, `.single()` e termina o `update` num
+ * `.select("id")` — e o que os testes precisam observar é exatamente
+ * **quais filtros foram aplicados**, porque a corretude do claim/lease mora
+ * neles (um `.or()` que virasse no-op não mudaria nada visível de outro
+ * jeito). Por isso este fake registra cada método da cadeia com seus
+ * argumentos, na ordem.
+ *
+ * As respostas são configuradas por (operação, tabela). `.single()` devolve a
+ * primeira linha da resposta configurada para aquele select.
+ */
+export type RecordedCall = { method: string; args: unknown[] };
+
+export type RecordedQuery = {
+  table: string;
+  op: "select" | "update" | "upsert" | "insert" | "delete";
+  /** Patch do `update`/linhas do `upsert`; ausente no `select`. */
+  patch?: Record<string, unknown>;
+  rows?: unknown[];
+  calls: RecordedCall[];
+};
+
+type Linhas = Record<string, unknown>[];
+
+export type QueryFakeRespostas = {
+  /** Linhas devolvidas por `from(tabela).select(...)`. */
+  select?: Record<string, Linhas>;
+  /** Linhas devolvidas por `from(tabela).update(...).select(...)`. */
+  update?: Record<string, Linhas>;
+  /** Linhas devolvidas por `from(tabela).upsert(...).select(...)`. */
+  upsert?: Record<string, Linhas>;
+  /** Erro por (op, tabela), ex.: `{ "update:alerts": "boom" }`. */
+  erros?: Record<string, string>;
+};
+
+export type QueryFake = {
+  client: SupabaseClient;
+  queries: RecordedQuery[];
+  /** Consultas de uma tabela/operação, na ordem em que aconteceram. */
+  de: (op: RecordedQuery["op"], table: string) => RecordedQuery[];
+};
+
+/** Acha o argumento de um método na cadeia registrada (ex.: `or`). */
+export function argsDe(q: RecordedQuery, metodo: string): unknown[] | undefined {
+  return q.calls.find((c) => c.method === metodo)?.args;
+}
+
+/** Todas as chamadas de um método na cadeia (ex.: dois `.eq()` diferentes). */
+export function todasAsChamadas(q: RecordedQuery, metodo: string): RecordedCall[] {
+  return q.calls.filter((c) => c.method === metodo);
+}
+
+const METODOS_CADEIA = [
+  "eq",
+  "neq",
+  "is",
+  "not",
+  "lt",
+  "lte",
+  "gt",
+  "gte",
+  "or",
+  "in",
+  "order",
+  "limit",
+  "range",
+] as const;
+
+export function createQueryFake(respostas: QueryFakeRespostas = {}): QueryFake {
+  const queries: RecordedQuery[] = [];
+
+  function box(q: RecordedQuery, linhas: Linhas, erro: string | null) {
+    const resultado = { data: linhas, error: erro === null ? null : { message: erro } };
+    // biome-ignore lint/suspicious/noExplicitAny: fake de query builder encadeável
+    const b: any = Promise.resolve(resultado);
+    for (const m of METODOS_CADEIA) {
+      b[m] = (...args: unknown[]) => {
+        q.calls.push({ method: m, args });
+        return b;
+      };
+    }
+    // `select` depois de update/upsert: registra e mantém a mesma resposta.
+    b.select = (...args: unknown[]) => {
+      q.calls.push({ method: "select", args });
+      return b;
+    };
+    b.single = () => {
+      q.calls.push({ method: "single", args: [] });
+      return Promise.resolve({
+        data: linhas[0] ?? null,
+        error: erro === null ? null : { message: erro },
+      });
+    };
+    b.maybeSingle = b.single;
+    return b;
+  }
+
+  const from = (table: string) => {
+    const abrir = (op: RecordedQuery["op"], extra: Partial<RecordedQuery>) => {
+      const q: RecordedQuery = { table, op, calls: [], ...extra };
+      queries.push(q);
+      const fonte =
+        op === "select"
+          ? respostas.select
+          : op === "update"
+            ? respostas.update
+            : op === "upsert"
+              ? respostas.upsert
+              : undefined;
+      return box(q, fonte?.[table] ?? [], respostas.erros?.[`${op}:${table}`] ?? null);
+    };
+    return {
+      select: (...args: unknown[]) => {
+        const b = abrir("select", {});
+        return b.select(...args);
+      },
+      update: (patch: Record<string, unknown>) => abrir("update", { patch }),
+      upsert: (rows: unknown[]) => abrir("upsert", { rows }),
+      insert: (rows: unknown[]) => abrir("insert", { rows }),
+      delete: () => abrir("delete", {}),
+    };
+  };
+
+  return {
+    client: { from } as unknown as SupabaseClient,
+    queries,
+    de: (op, table) => queries.filter((q) => q.op === op && q.table === table),
+  };
+}
+
+/**
  * Fake de `globalThis.fetch` pra `fetchChannelPage`: casa o slug pela URL.
  * Slug ausente do mapa devolve 404, que é como um canal quebrado se comporta.
  */

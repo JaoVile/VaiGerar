@@ -17,15 +17,24 @@ export type Update = {
 
 export type Entrada = { chatId: number; texto: string; callbackId?: string };
 
-/** Clique de botão vira texto: `tol:10` → `10`, `del:<id>` → `del:<id>`. */
+/**
+ * Clique de botão vira texto: `tol:10` → `10`, `del:<id>` → `del:<id>`.
+ * Interpreta payload de terceiro (o Telegram): qualquer parte que faltar —
+ * corpo `null`, `callback_query.message` vazio, `message` sem `chat` — devolve
+ * `null` em vez de lançar, independentemente de quem chama estar protegido.
+ */
 export function extrairEntrada(u: Update): Entrada | null {
-  const cb = u.callback_query;
-  if (cb?.message?.chat.id !== undefined && cb.data) {
+  const cb = u?.callback_query;
+  const cbChatId = cb?.message?.chat?.id;
+  if (cbChatId !== undefined && cb?.data) {
     const texto = cb.data.startsWith("tol:") ? cb.data.slice(4) : cb.data;
-    return { chatId: cb.message.chat.id, texto, callbackId: cb.id };
+    return { chatId: cbChatId, texto, callbackId: cb.id };
   }
-  const m = u.message;
-  if (m?.text) return { chatId: m.chat.id, texto: m.text, callbackId: undefined };
+  const m = u?.message;
+  const mChatId = m?.chat?.id;
+  if (mChatId !== undefined && m?.text) {
+    return { chatId: mChatId, texto: m.text, callbackId: undefined };
+  }
   return null;
 }
 

@@ -40,7 +40,7 @@ Tabelas `hunts`, `alerts`, `bot_sessions`, `user_settings` já existem (migratio
 
 ---
 
-### Task 1: Variáveis de ambiente do Telegram
+### Task 1: Variáveis de ambiente do bot, em leitor separado
 
 **Files:**
 - Modify: `lib/env.ts`
@@ -48,42 +48,54 @@ Tabelas `hunts`, `alerts`, `bot_sessions`, `user_settings` já existem (migratio
 - Test: `tests/env.test.ts`
 
 **Interfaces:**
-- Produces: `Env` ganha `telegramBotToken: string`, `telegramWebhookSecret: string`, `allowedChatIds: number[]`
+- `readEnv()` e o tipo `Env` **não mudam** — continuam exigindo só `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e `CRON_SECRET`.
+- Produces: `type BotEnv = { telegramBotToken: string; telegramWebhookSecret: string; allowedChatIds: number[] }`; `readBotEnv(source?): BotEnv`
+
+**Por que separado:** `readEnv()` é chamado por `/api/cron/tick`, `/api/cron/backfill` e `lib/db/client.ts`. As rotas de cron fazem `try { assertCronAuth(req, readEnv().cronSecret) } catch { return 401 }` — então uma variável faltando vira 401, indistinguível de segredo errado. Se as variáveis do bot entrassem na mesma lista de obrigatórias, esquecer uma delas na Vercel **pararia a coleta em silêncio**, com o scheduler externo registrando sucesso. O coletor não pode depender do bot.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Acrescente a `tests/env.test.ts` (não altere os testes existentes):
+Acrescente a `tests/env.test.ts`. **Não altere os testes existentes de `readEnv`** — eles continuam válidos, porque `readEnv` não muda.
 
 ```ts
-const COMPLETO = {
-  SUPABASE_URL: "https://x.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "key",
-  CRON_SECRET: "secret",
+import { readBotEnv } from "@/lib/env";
+
+const BOT = {
   TELEGRAM_BOT_TOKEN_OFERTAS: "123:abc",
   TELEGRAM_WEBHOOK_SECRET: "wh",
   ALLOWED_CHAT_IDS: "111,222",
 };
 
-describe("readEnv — telegram", () => {
+describe("readBotEnv", () => {
   it("lê o token e o segredo do webhook", () => {
-    const env = readEnv(COMPLETO);
+    const env = readBotEnv(BOT);
     expect(env.telegramBotToken).toBe("123:abc");
     expect(env.telegramWebhookSecret).toBe("wh");
   });
 
   it("converte ALLOWED_CHAT_IDS em números", () => {
-    expect(readEnv(COMPLETO).allowedChatIds).toEqual([111, 222]);
+    expect(readBotEnv(BOT).allowedChatIds).toEqual([111, 222]);
   });
 
   it("tolera espaços e entradas vazias na lista", () => {
-    expect(readEnv({ ...COMPLETO, ALLOWED_CHAT_IDS: " 111 , ,222 " }).allowedChatIds).toEqual([
+    expect(readBotEnv({ ...BOT, ALLOWED_CHAT_IDS: " 111 , ,222 " }).allowedChatIds).toEqual([
       111, 222,
     ]);
   });
 
-  it("falha nomeando a variável do telegram que falta", () => {
-    const { TELEGRAM_WEBHOOK_SECRET, ...semSegredo } = COMPLETO;
-    expect(() => readEnv(semSegredo)).toThrow(/TELEGRAM_WEBHOOK_SECRET/);
+  it("falha nomeando a variável do bot que falta", () => {
+    const { TELEGRAM_WEBHOOK_SECRET, ...semSegredo } = BOT;
+    expect(() => readBotEnv(semSegredo)).toThrow(/TELEGRAM_WEBHOOK_SECRET/);
+  });
+
+  it("NÃO exige as variáveis do bot em readEnv — o coletor não depende do bot", () => {
+    expect(() =>
+      readEnv({
+        SUPABASE_URL: "https://x.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY: "key",
+        CRON_SECRET: "secret",
+      }),
+    ).not.toThrow();
   });
 });
 ```
@@ -91,26 +103,20 @@ describe("readEnv — telegram", () => {
 - [ ] **Step 2: Rodar e ver falhar**
 
 Run: `pnpm test tests/env.test.ts`
-Expected: FAIL — `telegramBotToken` é `undefined`
+Expected: FAIL — `readBotEnv` não existe
 
 - [ ] **Step 3: Implementar**
 
-Em `lib/env.ts`, estenda o tipo e a lista, e acrescente o parser da lista:
+Em `lib/env.ts`, **mantenha `Env`, `REQUIRED` e `readEnv` exatamente como estão** e acrescente:
 
 ```ts
-export type Env = {
-  supabaseUrl: string;
-  supabaseServiceKey: string;
-  cronSecret: string;
+export type BotEnv = {
   telegramBotToken: string;
   telegramWebhookSecret: string;
   allowedChatIds: number[];
 };
 
-const REQUIRED = [
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "CRON_SECRET",
+const BOT_REQUIRED = [
   "TELEGRAM_BOT_TOKEN_OFERTAS",
   "TELEGRAM_WEBHOOK_SECRET",
   "ALLOWED_CHAT_IDS",
@@ -124,14 +130,28 @@ function parseChatIds(raw: string): number[] {
     .map(Number)
     .filter((n) => Number.isFinite(n));
 }
-```
 
-E no `return`, acrescente os três campos, usando `parseChatIds(source.ALLOWED_CHAT_IDS as string)`.
+/**
+ * Variáveis do bot, lidas à parte de propósito: o coletor roda sem elas.
+ * Ver a justificativa no cabeçalho da Task 1 do plano.
+ */
+export function readBotEnv(source: Record<string, string | undefined> = process.env): BotEnv {
+  const missing = BOT_REQUIRED.filter((k) => !source[k]);
+  if (missing.length > 0) {
+    throw new Error(`Variáveis do bot faltando: ${missing.join(", ")}`);
+  }
+  return {
+    telegramBotToken: source.TELEGRAM_BOT_TOKEN_OFERTAS as string,
+    telegramWebhookSecret: source.TELEGRAM_WEBHOOK_SECRET as string,
+    allowedChatIds: parseChatIds(source.ALLOWED_CHAT_IDS as string),
+  };
+}
+```
 
 - [ ] **Step 4: Rodar e ver passar**
 
 Run: `pnpm test`
-Expected: PASS. Atenção: os testes antigos de `readEnv` passavam objetos com só 3 variáveis e agora vão falhar por variável faltando — **isso é esperado e correto**. Atualize esses testes para usar `COMPLETO`, **sem mudar o que eles verificam** (o teste "falha quando falta variável" continua removendo uma variável e esperando o nome dela no erro).
+Expected: PASS, suíte inteira. Os testes antigos de `readEnv` continuam passando sem alteração — é o sinal de que a separação funcionou.
 
 - [ ] **Step 5: Atualizar o exemplo e commitar**
 
@@ -145,7 +165,7 @@ ALLOWED_CHAT_IDS=
 
 ```bash
 git add lib/env.ts .env.local.example tests/env.test.ts
-git commit -m "feat(env): variaveis do bot do telegram"
+git commit -m "feat(env): leitor separado para as variaveis do bot"
 ```
 
 ---
@@ -1469,13 +1489,13 @@ export async function tratar(
 import { NextResponse } from "next/server";
 import { autorizado, extrairEntrada, tratar, type Update } from "@/lib/bot/router";
 import { createDb } from "@/lib/db/client";
-import { readEnv } from "@/lib/env";
+import { readBotEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  const env = readEnv();
+  const env = readBotEnv();
 
   if (req.headers.get("x-telegram-bot-api-secret-token") !== env.telegramWebhookSecret) {
     return NextResponse.json({ error: "não autorizado" }, { status: 401 });
@@ -1723,13 +1743,13 @@ Em `app/api/cron/tick/route.ts`, depois do bloco do canário e antes do `return`
 ```ts
 let alertas = { casados: 0, enviados: 0, falhos: 0 };
 try {
-  alertas = await processarAlertas(createDb(), readEnv().telegramBotToken, new Date());
+  alertas = await processarAlertas(createDb(), readBotEnv().telegramBotToken, new Date());
 } catch (e) {
   console.error("Falha ao processar alertas:", e instanceof Error ? e.message : e);
 }
 ```
 
-E inclua `alertas` no JSON de resposta. Importa que esse `try/catch` seja separado: alerta quebrado não pode impedir a coleta, que é a função principal do tick.
+E inclua `alertas` no JSON de resposta. Importa que esse `try/catch` seja separado: alerta quebrado não pode impedir a coleta, que é a função principal do tick. `readBotEnv()` é chamado **dentro** dele de propósito — se as variáveis do bot faltarem na Vercel, os alertas falham e a coleta continua.
 
 - [ ] **Step 5: Rodar e ver passar**
 

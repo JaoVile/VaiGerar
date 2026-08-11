@@ -38,8 +38,12 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
   if (entrada.callbackId) await answerCallbackQuery(token, entrada.callbackId);
 
   if (texto.startsWith("del:")) {
-    await desativarHunt(db, texto.slice(4));
-    await sendMessage(token, chatId, "Caça desativada.");
+    const desativou = await desativarHunt(db, texto.slice(4), chatId);
+    await sendMessage(
+      token,
+      chatId,
+      desativou ? "Caça desativada." : "Não achei essa caça — talvez já tenha sido excluída.",
+    );
     return;
   }
 

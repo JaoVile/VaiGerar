@@ -73,7 +73,24 @@ export async function listarHunts(
   }));
 }
 
-export async function desativarHunt(db: SupabaseClient, huntId: string): Promise<void> {
-  const { error } = await db.from("hunts").update({ is_active: false }).eq("id", huntId);
+/**
+ * Desativa só se a caça pertencer a `chatId`. Sem esse filtro, qualquer chat
+ * autorizado que digitasse `del:<uuid-de-outro>` desativaria caça alheia —
+ * `ALLOWED_CHAT_IDS` é lista, mais de um chat é esperado.
+ * Devolve se alguma linha foi de fato desativada, pra o router poder avisar
+ * quando o id não existir ou não for do chat.
+ */
+export async function desativarHunt(
+  db: SupabaseClient,
+  huntId: string,
+  chatId: number,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("hunts")
+    .update({ is_active: false })
+    .eq("id", huntId)
+    .eq("chat_id", chatId)
+    .select("id");
   if (error) throw new Error(`Desativando caça ${huntId}: ${error.message}`);
+  return (data ?? []).length > 0;
 }

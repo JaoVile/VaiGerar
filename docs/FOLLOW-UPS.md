@@ -83,6 +83,29 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
   `sent_at`, a linha ainda libera pelo lease e repete no tick seguinte. O
   trade-off original continua valendo — perder alerta é pior que repetir.
 
+- **Terceira variante de cupom não coberta: "+ R$X na finalização".** Depois do
+  reprocessamento de 2026-08-10 (27.343 posts, 2.225 preços corrigidos), sobrou
+  este padrão, verificado em dado real:
+
+  ```
+  "🎟 BRASILPRIME + R$200 na finalização"  → R$200 vira o preço de um S25 Ultra
+  ```
+
+  Os marcadores atuais (`cupom|desconto|resgate|voucher|codigo`) não pegam
+  "na finalização", e o `🎟` também não está na lista. Efeito medido: a mediana
+  de `galaxy s25` ficou sã (R$3.967, plausível), mas o **mínimo** ainda mostra
+  resíduo (R$200). Como é a mediana que orienta a decisão de compra, não bloqueia.
+
+  Antes de acrescentar mais marcadores, considere que esta é a terceira variante
+  descoberta — lista de palavras é manutenção infinita. `docs/PLANO.md` propõe
+  ranquear por distância da mediana, que afunda esses valores estruturalmente
+  em vez de enumerá-los.
+
+- **Posts que são lista de cupom ficam com o piso de compra como "preço".**
+  Ex.: `"R$300 OFF a partir de R$1.499"` grava R$1.499. Nem o cupom nem o piso
+  são preço de produto — o certo seria `null`. Não é regressão (antes gravava o
+  valor do cupom, pior), e esses posts raramente casam com busca de produto.
+
 ## Avaliado e descartado
 
 - `assertCronAuth` usa `!==` em vez de comparação constant-time. Timing attack

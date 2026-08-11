@@ -62,10 +62,28 @@ describe("buscar", () => {
       type: "plain",
       config: "portuguese",
     });
-    expect(db._chain.order).toHaveBeenCalledWith("price_cents", {
-      ascending: true,
-    });
     expect(db._chain.limit).toHaveBeenCalledWith(2000);
+  });
+
+  // Este teste já assertou o contrário — que `buscar` pedia
+  // `.order("price_cents", { ascending: true })` ao banco. A asserção estava
+  // protegendo um defeito: com `order asc` + `limit(2000)`, um termo que casa
+  // mais de 2000 posts fazia o banco devolver os 2000 MAIS BARATOS, e é sobre
+  // esse conjunto que `priceStats` roda — a mediana virava a mediana da cauda
+  // barata e `maxCents`, o 2000º mais barato em vez do maior preço real.
+  // Como esses números alimentam o `/agora` e ancoram o preço-alvo do
+  // `/cacar`, a ordenação foi tirada da consulta: o corte de 2000 passa a ser
+  // uma amostra neutra do conjunto casado. Quem precisa de ordem é só
+  // `melhores`, e essa ordenação acontece no cliente (ver os dois primeiros
+  // testes deste arquivo, que continuam exigindo o resultado ordenado).
+  it("NÃO pede ordenação ao banco — o limite tem que ser amostra neutra, não a cauda barata", async () => {
+    const db = fakeDb([linha(300), linha(100), linha(200)]);
+    const r = await buscar(db, "air fryer");
+    expect(db._chain.order).not.toHaveBeenCalled();
+    expect(db._chain.limit).toHaveBeenCalledWith(2000);
+    // ordem do banco irrelevante: quem ordena é o cliente.
+    expect(r.melhores.map((m) => m.priceCents)).toEqual([100, 200, 300]);
+    expect(r.stats?.maxCents).toBe(300);
   });
 
   it("propaga erro do banco com o termo na mensagem", async () => {

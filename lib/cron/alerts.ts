@@ -54,6 +54,32 @@ const LOTE_ENVIO = 5;
  */
 const LEASE_MS = 2 * 60 * 1000;
 
+/**
+ * Orçamento de tempo, em ms, que `processarAlertas` pode gastar *iniciando*
+ * envios antes de parar e deixar o resto pendente para o próximo tick.
+ *
+ * A conta: `maxDuration` da rota é 60s; o `ingestAll` que roda antes desta
+ * função já pode ter consumido até ~15s; e um `sendMessage` individual tem
+ * até 15s de timeout (`lib/telegram.ts`). Parar de *iniciar* novo envio ao
+ * passar de 35s de processamento (medidos a partir do começo desta função)
+ * dá folga pro último envio já iniciado terminar sem estourar o orçamento —
+ * na prática o Telegram responde em centenas de ms, então esse teto raramente
+ * chega a ser testado. Não é uma garantia matemática dos 60s no pior caso
+ * absoluto (ingest e envio no limite ao mesmo tempo), só reduz muito a chance
+ * frente ao que havia antes (ver `docs/FOLLOW-UPS.md`).
+ *
+ * Deliberadamente não é "reduzir o timeout de envio": isso viraria constante
+ * mágica que se desatualiza quando `LOTE_ENVIO` ou a contagem de canais
+ * mudar, e transformaria resposta lenta-porém-bem-sucedida em falha.
+ */
+const ORCAMENTO_ENTREGA_MS = 35_000;
+
+/** Cronômetro real: a cada chamada devolve ms decorridos desde a criação. */
+function cronometro(): () => number {
+  const inicio = Date.now();
+  return () => Date.now() - inicio;
+}
+
 export function formatAlerta(hunt: Hunt, post: AlertPost): string {
   const abaixo = Math.round((1 - post.priceCents / hunt.priceMaxCents) * 100);
   const loja = post.store ? ` · ${escapeHtml(post.store)}` : "";
@@ -119,7 +145,19 @@ export async function processarAlertas(
   db: SupabaseClient,
   token: string,
   agora: Date,
-): Promise<{ casados: number; enviados: number; falhos: number }> {
+  /**
+   * Ms decorridos desde o início desta chamada. Injetável pra teste não
+   * precisar esperar `ORCAMENTO_ENTREGA_MS` de verdade; em produção é sempre
+   * o relógio real, criado fresco a cada chamada (o default é reavaliado por
+   * invocação, não compartilhado entre ticks).
+   */
+  decorridoMs: () => number = cronometro(),
+): Promise<{
+  casados: number;
+  enviados: number;
+  falhos: number;
+  adiados: number;
+}> {
   const { data: huntRows, error: huntErr } = await db
     .from("hunts")
     .select("*")
@@ -191,16 +229,18 @@ export async function processarAlertas(
   const enfileirar = filaPorChat();
   const resultados = await Promise.allSettled(
     (pendentes ?? []).map((a) =>
-      processarUmAlerta(db, token, a, agora, leaseCutoffIso, enfileirar),
+      processarUmAlerta(db, token, a, agora, leaseCutoffIso, enfileirar, decorridoMs),
     ),
   );
 
   let enviados = 0;
   let falhos = 0;
+  let adiados = 0;
   for (const r of resultados) {
     if (r.status === "fulfilled") {
       if (r.value === "enviado") enviados++;
       else if (r.value === "falho") falhos++;
+      else if (r.value === "adiado") adiados++;
       // "pulado" (não conseguiu o claim, ou 429 devolvido à fila) não conta
       // em nenhum dos dois.
     } else {
@@ -209,10 +249,10 @@ export async function processarAlertas(
     }
   }
 
-  return { casados, enviados, falhos };
+  return { casados, enviados, falhos, adiados };
 }
 
-type ResultadoAlerta = "enviado" | "falho" | "pulado";
+type ResultadoAlerta = "enviado" | "falho" | "pulado" | "adiado";
 
 async function processarUmAlerta(
   db: SupabaseClient,
@@ -226,7 +266,17 @@ async function processarUmAlerta(
   agora: Date,
   leaseCutoffIso: string,
   enfileirar: Enfileirar,
+  decorridoMs: () => number,
 ): Promise<ResultadoAlerta> {
+  // Guarda de prazo, checada *antes* do claim de propósito: uma linha
+  // adiada aqui não pode ganhar `attempts` nem `claimed_at` — ela tem que
+  // voltar limpa pra fila. Checar antes evita ter que reverter o claim
+  // (como o 429 faz mais abaixo) pra desfazer algo que nem precisava
+  // acontecer. E só vale pra *iniciar* o envio: um que já começou termina
+  // (ou estoura o próprio timeout de 15s do `sendMessage`), não é abortado
+  // no meio.
+  if (decorridoMs() > ORCAMENTO_ENTREGA_MS) return "adiado";
+
   // Claim atômico com lease: incrementa attempts e grava claimed_at,
   // condicionado ao attempts que acabamos de ler E à linha estar livre
   // (claimed_at nulo ou vencido). Se outro tick já reivindicou, nenhuma

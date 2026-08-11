@@ -53,20 +53,35 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
 ## Etapa C — bot e alertas
 
 - **Entrega duplicada de alerta: o gatilho realista é _timeout do tick_, não
-  crash.** O comentário original do lease em `lib/cron/alerts.ts` falava em
-  "crash", e isso subestima o risco: o lease é de **2 minutos** e o tick roda a
-  cada **5**, então uma linha órfã de um tick que morreu no meio está sempre
+  crash — mitigado, não eliminado.** O lease é de **2 minutos** e o tick roda
+  a cada **5**, então uma linha órfã de um tick que morreu no meio está sempre
   livre para reivindicação no tick seguinte — e se o `sendMessage` daquele tick
   chegou a completar antes da morte, o usuário recebe o mesmo alerta duas
   vezes. Crash de função na Vercel é raro; estourar o `maxDuration` de 60s não
-  é: o tick faz `ingestAll` dos canais **e** até 5 entregas cujo timeout
-  individual é de 15s, e desde a correção do 429 as entregas para o mesmo chat
-  são serializadas (o pior caso teórico, 5 × 15s, já não cabe nos 60s). O
-  desenho está certo na prioridade — perder alerta é pior que repetir alerta —
-  mas o número está frouxo. Saídas, quando incomodar: lease maior que o
-  intervalo do tick (ex.: 6 min), ou gravar `sent_at` **antes** do envio
-  (troca duplicata por perda), ou uma guarda de prazo que pare de iniciar
-  envios novos perto do fim do orçamento da função.
+  era: com a serialização por chat da correção do 429 (mono-usuário → todos os
+  alertas no mesmo chat → entrega vira sequencial), o pior caso teórico de
+  `LOTE_ENVIO=5` × 15s de timeout por envio já não cabia nos 60s, mesmo sem
+  contar o `ingestAll` antes.
+
+  A correção: `ORCAMENTO_ENTREGA_MS` (35s, `lib/cron/alerts.ts`) — uma guarda
+  de prazo que para de **iniciar** novos envios depois de 35s de processamento
+  desde o começo de `processarAlertas`, deixando o resto pendente pro próximo
+  tick. Checada *antes* do claim, então a linha adiada não ganha `attempts`
+  nem `claimed_at` — volta limpa pra fila. Um envio já iniciado não é
+  interrompido no meio; termina ou estoura o próprio timeout de 15s.
+  Alternativas descartadas: reduzir o timeout de envio vira constante mágica
+  que se desatualiza quando `LOTE_ENVIO` ou a contagem de canais mudar, e
+  transforma resposta lenta-porém-bem-sucedida em falha; aumentar o lease não
+  toca na duração do tick, só adia quando a duplicata acontece.
+
+  **O que isso não resolve:** a guarda reduz muito a chance de o tick estourar
+  o `maxDuration` — mas não é uma garantia matemática do pior caso absoluto
+  (ingest no teto dos ~15s *e* o envio em voo no momento do corte também no
+  teto dos 15s ainda somam mais que os 60s). E ela não elimina a duplicata por
+  morte de processo em si: se a função for morta por qualquer outro motivo
+  (não só timeout) depois do `sendMessage` completar e antes de gravar
+  `sent_at`, a linha ainda libera pelo lease e repete no tick seguinte. O
+  trade-off original continua valendo — perder alerta é pior que repetir.
 
 ## Avaliado e descartado
 

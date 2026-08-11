@@ -44,7 +44,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ...summary, reports }, { status: 500 });
   }
 
-  let alertas = { casados: 0, enviados: 0, falhos: 0 };
+  let alertas = { casados: 0, enviados: 0, falhos: 0, adiados: 0 };
   try {
     alertas = await processarAlertas(createDb(), readBotEnv().telegramBotToken, new Date());
   } catch (e) {

@@ -157,7 +157,10 @@ describe("processarAlertas — claim com lease", () => {
     await processarAlertas(db.client, "tok", AGORA);
 
     const claim = db.de("update", "alerts")[0];
-    expect(claim.patch).toEqual({ attempts: 1, claimed_at: AGORA.toISOString() });
+    expect(claim.patch).toEqual({
+      attempts: 1,
+      claimed_at: AGORA.toISOString(),
+    });
     const eqs = todasAsChamadas(claim, "eq").map((c) => c.args);
     // id da linha E attempts lido: se outro tick já incrementou, não casa.
     expect(eqs).toContainEqual(["id", 55]);
@@ -198,7 +201,9 @@ describe("processarAlertas — claim com lease", () => {
 
     const updateHunts = db.de("update", "hunts");
     expect(updateHunts).toHaveLength(1);
-    expect(updateHunts[0].patch).toEqual({ last_alert_at: AGORA.toISOString() });
+    expect(updateHunts[0].patch).toEqual({
+      last_alert_at: AGORA.toISOString(),
+    });
   });
 
   it("falha comum de envio mantém o attempts incrementado (queima tentativa)", async () => {
@@ -225,6 +230,60 @@ describe("processarAlertas — claim com lease", () => {
     // reverte o incremento do claim e solta o lease
     expect(updates[1].patch).toEqual({ attempts: 0, claimed_at: null });
     expect(argsDe(updates[1], "eq")).toEqual(["id", 55]);
+  });
+
+  it("prazo estourado: nenhum envio inicia, nada é reivindicado, `adiados` conta os pendentes", async () => {
+    const db = cenario({
+      pendentes: [
+        { id: 55, hunt_id: "h1", post_row_id: 10, attempts: 0 },
+        { id: 56, hunt_id: "h1", post_row_id: 11, attempts: 0 },
+      ],
+    });
+    // Acima de ORCAMENTO_ENTREGA_MS (35s) desde o primeiro instante.
+    const r = await processarAlertas(db.client, "tok", AGORA, () => 40_000);
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(r.enviados).toBe(0);
+    expect(r.falhos).toBe(0);
+    expect(r.adiados).toBe(2);
+    // A guarda é checada antes do claim: nenhum update em `alerts` acontece.
+    expect(db.de("update", "alerts")).toHaveLength(0);
+  });
+
+  it("prazo folgado não muda o comportamento (relógio real, bem abaixo do orçamento)", async () => {
+    const db = cenario();
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(r.enviados).toBe(1);
+    expect(r.adiados).toBe(0);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("prazo estoura no meio do lote: as primeiras são enviadas, as seguintes ficam para depois", async () => {
+    const db = cenario({
+      pendentes: [
+        { id: 55, hunt_id: "h1", post_row_id: 10, attempts: 0 },
+        { id: 56, hunt_id: "h1", post_row_id: 11, attempts: 0 },
+        { id: 57, hunt_id: "h1", post_row_id: 12, attempts: 0 },
+      ],
+      claim: [{ id: 55 }],
+    });
+    let chamada = 0;
+    // A guarda é checada, por item, antes de qualquer `await` — então as
+    // chamadas acontecem na ordem do `pendentes`, mesmo com o resto correndo
+    // em paralelo. 1ª e 2ª: dentro do orçamento. 3ª em diante: estourado.
+    const decorridoMs = () => {
+      chamada++;
+      return chamada <= 2 ? 1_000 : 40_000;
+    };
+    const r = await processarAlertas(db.client, "tok", AGORA, decorridoMs);
+
+    expect(r.enviados).toBe(2);
+    expect(r.adiados).toBe(1);
+    expect(r.falhos).toBe(0);
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    // 2 claims + 2 gravações de sent_at; a 3ª linha nunca chega no update.
+    expect(db.de("update", "alerts")).toHaveLength(4);
   });
 
   it("serializa envios para o mesmo chat em vez de disparar o lote junto", async () => {

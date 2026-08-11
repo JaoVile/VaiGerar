@@ -62,6 +62,10 @@ describe("buscar", () => {
       type: "plain",
       config: "portuguese",
     });
+    expect(db._chain.order).toHaveBeenCalledWith("price_cents", {
+      ascending: true,
+    });
+    expect(db._chain.limit).toHaveBeenCalledWith(2000);
   });
 
   it("propaga erro do banco com o termo na mensagem", async () => {

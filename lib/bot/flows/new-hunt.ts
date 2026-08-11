@@ -41,18 +41,19 @@ const CONFIRMACOES = new Set([
   "claro",
   "positivo",
 ]);
-const NEGACOES = new Set(["nao"]);
+const NEGACOES = new Set(["nao", "n", "nunca", "jamais", "cancela", "cancelar", "negativo"]);
 
 /**
- * Confirma só se a primeira palavra estiver no conjunto fechado — e mesmo
- * assim não confirma se a palavra seguinte for uma negação ("isso não,
- * cancela" não pode virar confirmação só porque "isso" bate no conjunto).
+ * Confirma só se a primeira palavra estiver no conjunto fechado de
+ * afirmativas e nenhuma palavra do texto for negação — não importa a
+ * posição ("isso não", "isso aí não", "isso pode ser mas hoje não" todas
+ * cancelam, porque checa a frase inteira, não só a palavra seguinte).
  */
 function lerConfirmacao(entrada: string): boolean {
   const palavras = normalizar(entrada).match(/[a-z0-9]+/g) ?? [];
   const primeira = palavras[0];
   if (primeira === undefined) return false;
-  if (palavras[1] && NEGACOES.has(palavras[1])) return false;
+  if (palavras.some((p) => NEGACOES.has(p))) return false;
   return CONFIRMACOES.has(primeira);
 }
 

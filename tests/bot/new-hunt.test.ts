@@ -100,6 +100,30 @@ describe("fluxo de nova caça", () => {
     });
   });
 
+  describe("negação em qualquer posição cancela, não só a segunda palavra (fix round 2)", () => {
+    const d = { produto: "s25 plus", alvoCents: 300000, tolerancePct: 10 };
+
+    it('"isso aí não" cancela (negação na terceira palavra)', () => {
+      expect(receber("confirm", d, "isso aí não", STATS).proximo).toBe("cancel");
+    });
+
+    it('"isso mesmo não" cancela (negação na terceira palavra)', () => {
+      expect(receber("confirm", d, "isso mesmo não", STATS).proximo).toBe("cancel");
+    });
+
+    it('"isso pode ser mas hoje não" cancela (negação no fim da frase)', () => {
+      expect(receber("confirm", d, "isso pode ser mas hoje não", STATS).proximo).toBe("cancel");
+    });
+
+    it('"isso sim" continua confirmando (sem negação)', () => {
+      expect(receber("confirm", d, "isso sim", STATS).proximo).toBe("done");
+    });
+
+    it('"pode sim" continua confirmando (sem negação)', () => {
+      expect(receber("confirm", d, "pode sim", STATS).proximo).toBe("done");
+    });
+  });
+
   describe("estado corrompido não vira caça inventada (fix round 1)", () => {
     it("ask_tolerance sem alvoCents cancela em vez de assumir faixa 0-0", () => {
       const r = receber("ask_tolerance", { produto: "s25 plus" }, "10", STATS);

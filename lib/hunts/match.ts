@@ -10,7 +10,7 @@ export type Hunt = {
   priceMaxCents: number;
 };
 
-/** Faixa a partir do alvo e da tolerância em porcento. Espelha as colunas geradas de `hunts`. */
+/** Faixa a partir do alvo e da tolerância em porcento. Para pré-visualização no chat; as colunas geradas de `hunts` são autoritativas. Podem divergir em 1 centavo com tolerância fracionária. */
 export function faixaDe(
   alvoCents: number,
   tolerancePct: number,

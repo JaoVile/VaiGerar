@@ -5,7 +5,7 @@ export function normalizar(s: string): string {
       .normalize("NFD")
       // Faixa dos diacríticos combinantes, escrita com escape Unicode de propósito:
       // colar os caracteres combinantes literais no fonte é frágil.
-      .replace(/[̀-ͯ]/g, "")
+      .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
       .replace(/\s+/g, " ")
       .trim()

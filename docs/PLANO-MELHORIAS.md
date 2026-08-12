@@ -12,7 +12,7 @@ e as decisões a tomar antes de escrever código.
 |---|---|---|---|
 | ~~0~~ | ~~Título e link do resultado~~ | defeito | **feito em 11/08 e corrigido de novo em 12/08** |
 | ~~1~~ | ~~Provar o alerta em produção~~ | verificação | **feito em 12/08 — ver abaixo** |
-| 2 | Guarda de prazo inerte | dívida | risco real de alerta duplicado |
+| ~~2~~ | ~~Guarda de prazo inerte~~ | dívida | **feito em 12/08** |
 | 3 | Casamento semântico | qualidade | teto de precisão atual |
 | 4 | Tendência de preço | capacidade nova | dado já pago |
 | 5 | Cobertura onde o dado é fino | dado | dobrável e academia sem amostra |
@@ -120,7 +120,32 @@ o `unique(hunt_id, post_row_id)` impedindo repetição no tick seguinte.
 **Cuidado:** confirmar que o alerta **não repete** no tick seguinte antes de
 apagar a caça — é a metade do comportamento que só a realidade prova.
 
-## 2. A guarda de prazo é inerte
+## 2. A guarda de prazo é inerte — CORRIGIDO em 2026-08-12
+
+**O que mudou.** A guarda passou a ser checada dentro da fila de entrega,
+imediatamente antes de cada `sendMessage`, em vez de uma vez só no início de
+todas as chamadas. `filaPorChat` serializa por chat, então essa função só roda
+quando a entrega anterior terminou — é o único ponto do caminho onde o relógio
+já andou. A checagem antiga, antes do claim, continua lá (adia sem sujar a
+linha), mas agora está documentada como não sendo a que morde.
+
+Linha adiada dentro da fila volta limpa: mesmo desfazer do 429 (`attempts` ao
+valor lido, `claimed_at` nulo). Sem isso o adiamento queimaria uma das
+`MAX_TENTATIVAS` sem nunca tentar entregar.
+
+**O teste.** O antigo injetava um `decorridoMs` que contava *chamadas* — ele
+passava com a guarda inerte, que era o defeito. Três novos: um com relógio que
+só anda dentro do `sendMessage`, um que confere a devolução limpa, e um com
+`cronometro()` real e envio lento, como o plano exigia. Todos ficam vermelhos
+se a guarda voltar pra "só na largada"; verificado por mutação.
+
+`orcamentoMs` virou parâmetro injetável (default `ORCAMENTO_ENTREGA_MS`) —
+sem isso não dá pra testar com relógio real sem esperar 35 s.
+
+---
+
+## 2-bis. Diagnóstico original (mantido para histórico)
+
 
 **Medido:** `ORCAMENTO_ENTREGA_MS` (35s) deveria parar de iniciar envios perto
 do fim do orçamento da função. Não funciona. `Promise.allSettled` invoca as 5

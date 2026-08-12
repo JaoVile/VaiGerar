@@ -381,31 +381,75 @@ describe("processarAlertas — claim com lease", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
-  it("prazo estoura no meio do lote: as primeiras são enviadas, as seguintes ficam para depois", async () => {
+  // A versão anterior deste teste injetava um `decorridoMs` que contava
+  // CHAMADAS, não tempo. Ele passava com a guarda inerte: `Promise.allSettled`
+  // invoca as LOTE_ENVIO chamadas sincronamente, e a guarda ficava antes de
+  // qualquer `await`, então as cinco liam o mesmo instante — medido em 12/08,
+  // `[2,2,2,2,2]` ms numa execução de 344 ms. O contador de chamadas fabricava
+  // uma passagem de tempo que o relógio real nunca produzia.
+  //
+  // Aqui o relógio só anda DENTRO do `sendMessage`. Um mecanismo que checa o
+  // prazo só na largada lê 0 nas três vezes e envia as três.
+  it("prazo é checado entre os envios, não só na largada", async () => {
     const db = cenario({
       pendentes: [
         { id: 55, hunt_id: "h1", post_row_id: 10, attempts: 0 },
         { id: 56, hunt_id: "h1", post_row_id: 11, attempts: 0 },
         { id: 57, hunt_id: "h1", post_row_id: 12, attempts: 0 },
       ],
-      claim: [{ id: 55 }],
     });
-    let chamada = 0;
-    // A guarda é checada, por item, antes de qualquer `await` — então as
-    // chamadas acontecem na ordem do `pendentes`, mesmo com o resto correndo
-    // em paralelo. 1ª e 2ª: dentro do orçamento. 3ª em diante: estourado.
-    const decorridoMs = () => {
-      chamada++;
-      return chamada <= 2 ? 1_000 : 40_000;
-    };
-    const r = await processarAlertas(db.client, "tok", AGORA, decorridoMs);
+    let relogio = 0;
+    sendMessageMock.mockImplementation(async () => {
+      relogio += 50;
+    });
+    const r = await processarAlertas(db.client, "tok", AGORA, () => relogio, 75);
 
+    // 1º envio na largada (0), 2º aos 50 (dentro), 3º aos 100 (estourado).
     expect(r.enviados).toBe(2);
     expect(r.adiados).toBe(1);
     expect(r.falhos).toBe(0);
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
-    // 2 claims + 2 gravações de sent_at; a 3ª linha nunca chega no update.
-    expect(db.de("update", "alerts")).toHaveLength(4);
+  });
+
+  it("linha adiada volta limpa pra fila — sem queimar tentativa nem travar no lease", async () => {
+    // Se o adiamento deixasse `attempts` incrementado e `claimed_at` gravado,
+    // um tick apertado gastaria as MAX_TENTATIVAS da linha sem nunca tentar
+    // entregar, e ela ficaria travada até o lease vencer.
+    const db = cenario({
+      pendentes: [
+        { id: 55, hunt_id: "h1", post_row_id: 10, attempts: 0 },
+        { id: 56, hunt_id: "h1", post_row_id: 11, attempts: 2 },
+      ],
+    });
+    let relogio = 0;
+    sendMessageMock.mockImplementation(async () => {
+      relogio += 50;
+    });
+    const r = await processarAlertas(db.client, "tok", AGORA, () => relogio, 25);
+
+    expect(r.adiados).toBe(1);
+    const revert = db.de("update", "alerts").filter((u) => (u.patch ?? {}).claimed_at === null);
+    expect(revert).toHaveLength(1);
+    expect(revert[0].patch).toEqual({ attempts: 2, claimed_at: null });
+  });
+
+  // O plano (item 2 do PLANO-MELHORIAS) pedia explicitamente um teste de
+  // relógio de verdade, com envio artificialmente lento: "senão o próximo
+  // mecanismo também vai parecer funcionar sem funcionar". Este é ele — usa
+  // `cronometro()` real (o default), só o orçamento é injetado.
+  it("com relógio de verdade e envio lento, o lote para no meio", async () => {
+    const db = cenario({
+      pendentes: [
+        { id: 55, hunt_id: "h1", post_row_id: 10, attempts: 0 },
+        { id: 56, hunt_id: "h1", post_row_id: 11, attempts: 0 },
+        { id: 57, hunt_id: "h1", post_row_id: 12, attempts: 0 },
+      ],
+    });
+    sendMessageMock.mockImplementation(() => new Promise((r) => setTimeout(r, 50)));
+    const r = await processarAlertas(db.client, "tok", AGORA, undefined, 75);
+
+    expect(r.enviados).toBe(2);
+    expect(r.adiados).toBe(1);
   });
 
   it("serializa envios para o mesmo chat em vez de disparar o lote junto", async () => {

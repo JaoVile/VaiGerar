@@ -179,6 +179,12 @@ type Enfileirar = <T>(chatId: number, tarefa: () => Promise<T>) => Promise<T>;
  * A tarefa anterior é encadeada com `.then(t, t)`: falha de um envio não pode
  * cancelar o envio seguinte da mesma fila.
  */
+/**
+ * Sinaliza que o orçamento do tick acabou antes de esta entrega chegar na
+ * vez dela. Não é falha da linha: ela volta limpa pra fila.
+ */
+class PrazoEstouradoError extends Error {}
+
 function filaPorChat(): Enfileirar {
   const ultimo = new Map<number, Promise<unknown>>();
   return <T>(chatId: number, tarefa: () => Promise<T>): Promise<T> => {
@@ -240,6 +246,14 @@ export async function processarAlertas(
    * invocação, não compartilhado entre ticks).
    */
   decorridoMs: () => number = cronometro(),
+  /**
+   * Teto de tempo pra *iniciar* envio. Injetável pelo mesmo motivo do
+   * `decorridoMs`, mas por um motivo mais específico: o teste desta guarda
+   * precisa de relógio de verdade (ver `ORCAMENTO_ENTREGA_MS`), e esperar
+   * 35 s reais num teste unitário não é opção. Com o orçamento injetável dá
+   * pra usar `cronometro()` real e um orçamento de milissegundos.
+   */
+  orcamentoMs: number = ORCAMENTO_ENTREGA_MS,
 ): Promise<{
   casados: number;
   enviados: number;
@@ -361,7 +375,17 @@ export async function processarAlertas(
   const enfileirar = filaPorChat();
   const resultados = await Promise.allSettled(
     (pendentes ?? []).map((a) =>
-      processarUmAlerta(db, token, a, agora, leaseCutoffIso, enfileirar, decorridoMs, statsPorHunt),
+      processarUmAlerta(
+        db,
+        token,
+        a,
+        agora,
+        leaseCutoffIso,
+        enfileirar,
+        decorridoMs,
+        orcamentoMs,
+        statsPorHunt,
+      ),
     ),
   );
 
@@ -399,16 +423,20 @@ async function processarUmAlerta(
   leaseCutoffIso: string,
   enfileirar: Enfileirar,
   decorridoMs: () => number,
+  orcamentoMs: number,
   statsPorHunt: Map<string, Promise<PriceStats | null>>,
 ): Promise<ResultadoAlerta> {
-  // Guarda de prazo, checada *antes* do claim de propósito: uma linha
-  // adiada aqui não pode ganhar `attempts` nem `claimed_at` — ela tem que
-  // voltar limpa pra fila. Checar antes evita ter que reverter o claim
-  // (como o 429 faz mais abaixo) pra desfazer algo que nem precisava
-  // acontecer. E só vale pra *iniciar* o envio: um que já começou termina
-  // (ou estoura o próprio timeout de 15s do `sendMessage`), não é abortado
-  // no meio.
-  if (decorridoMs() > ORCAMENTO_ENTREGA_MS) return "adiado";
+  // Primeira guarda de prazo, antes do claim: uma linha adiada aqui não ganha
+  // `attempts` nem `claimed_at`, volta limpa pra fila sem precisar reverter
+  // nada.
+  //
+  // Ela sozinha NÃO é a guarda efetiva, e por muito tempo pareceu ser. Como
+  // `Promise.allSettled` invoca as LOTE_ENVIO chamadas sincronamente e este
+  // `if` é a primeira instrução antes de qualquer `await`, as cinco leem o
+  // mesmo instante — medido em 12/08: `[2,2,2,2,2]` ms numa execução de
+  // 344 ms. Quem chega aqui na largada sempre passa. A guarda que morde é a
+  // de dentro da fila, mais abaixo, checada na vez de cada envio.
+  if (decorridoMs() > orcamentoMs) return "adiado";
 
   // Claim atômico com lease: incrementa attempts e grava claimed_at,
   // condicionado ao attempts que acabamos de ler E à linha estar livre
@@ -456,11 +484,32 @@ async function processarUmAlerta(
       },
       stats,
     );
-    await enfileirar(hunt.chatId, () => sendMessage(token, hunt.chatId, texto));
+    // Guarda efetiva. `enfileirar` serializa por chat, então esta função só
+    // roda quando a entrega anterior do mesmo chat terminou — é o único ponto
+    // do caminho onde o relógio já andou. Checar aqui é o que transforma o
+    // orçamento em algo que o relógio real produz.
+    await enfileirar(hunt.chatId, () => {
+      if (decorridoMs() > orcamentoMs) throw new PrazoEstouradoError();
+      return sendMessage(token, hunt.chatId, texto);
+    });
     await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
     await db.from("hunts").update({ last_alert_at: agora.toISOString() }).eq("id", hunt.id);
     return "enviado";
   } catch (e) {
+    if (e instanceof PrazoEstouradoError) {
+      // O tick acabou antes da vez desta linha. Mesmo desfazer do 429: ela
+      // não fez nada de errado e tem que voltar intacta, senão o adiamento
+      // queimaria uma das MAX_TENTATIVAS e a linha ainda ficaria travada
+      // até o lease vencer.
+      const { error: revErr } = await db
+        .from("alerts")
+        .update({ attempts: tentativasAntes, claimed_at: null })
+        .eq("id", a.id);
+      if (revErr) {
+        console.error("Falha ao devolver alerta à fila após estourar o prazo:", revErr.message);
+      }
+      return "adiado";
+    }
     if (e instanceof TelegramRateLimitError) {
       // 429 não é culpa desta linha — é ritmo. Desfaz o claim (attempts de
       // volta ao valor lido, claimed_at limpo) pra a linha voltar intacta à

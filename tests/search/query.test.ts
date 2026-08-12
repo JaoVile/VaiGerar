@@ -129,3 +129,55 @@ describe("buscar", () => {
     expect(r.melhores[0]?.productUrl).toBeNull();
   });
 });
+
+describe("buscar — casamento por token no ranking", () => {
+  // Medido em 12/08 sobre resultados reais: aplicar o casamento por token
+  // como FILTRO corta 51% de "fone bluetooth", matando "Fone de ouvido
+  // Bluetooth", que é o produto pedido. Exigir palavras coladas serve pra
+  // nome de modelo, não pra frase digitada. Por isso ele ordena, não filtra.
+  it("não remove da lista o que não casa exato", async () => {
+    const db = fakeDb([
+      linha(20000, { text: "Fone de ouvido Bluetooth Anker" }),
+      linha(10000, { text: "Fone Bluetooth JBL" }),
+    ]);
+    const r = await buscar(db, "fone bluetooth");
+    expect(r.melhores).toHaveLength(2);
+  });
+
+  it("quem casa exato sobe, mesmo custando mais caro", async () => {
+    // Sem a subida, o de R$100 (que nem é o produto) abriria a lista só por
+    // ser mais barato.
+    const exatos = Array.from({ length: 15 }, (_, i) =>
+      linha(30000 + i, { text: "Galaxy S25 5G 256GB" }),
+    );
+    const db = fakeDb([linha(10000, { text: "Galaxy S25 Ultra 512GB" }), ...exatos]);
+    const r = await buscar(db, "galaxy s25");
+    expect(r.melhores[0].text).toContain("S25 5G");
+  });
+
+  // O ganho medido: a mediana de "galaxy s25" caía de R$ 3.999 para R$ 3.446
+  // ao tirar S25 Ultra e S25 FE da conta. Essa mediana ancora o preço-alvo do
+  // /cacar e a linha "% abaixo do mercado" do alerta.
+  it("estatística sai só dos exatos quando há amostra", async () => {
+    const exatos = Array.from({ length: 15 }, () => linha(300000, { text: "Galaxy S25 5G 256GB" }));
+    const caros = Array.from({ length: 15 }, () =>
+      linha(900000, { text: "Galaxy S25 Ultra 512GB" }),
+    );
+    const r = await buscar(fakeDb([...exatos, ...caros]), "galaxy s25");
+    expect(r.stats?.medianCents).toBe(300000);
+    expect(r.stats?.count).toBe(15);
+  });
+
+  // Dobrável tem 2 anúncios em 3 meses. Mediana de 2 pontos é pior que
+  // mediana enviesada, então abaixo de MIN_EXATOS a conta volta a ser sobre
+  // tudo que casou no full-text.
+  it("amostra exata pequena demais volta a usar o conjunto todo", async () => {
+    const db = fakeDb([
+      linha(300000, { text: "Galaxy Z Fold7 256GB" }),
+      linha(900000, { text: "Huawei Mate X6 concorre com o Galaxy Z Fold7" }),
+      linha(600000, { text: "Motorola Razr concorre com dobravel" }),
+    ]);
+    const r = await buscar(db, "galaxy z fold7");
+    expect(r.stats?.count).toBe(3);
+  });
+});

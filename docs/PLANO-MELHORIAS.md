@@ -13,7 +13,7 @@ e as decisões a tomar antes de escrever código.
 | ~~0~~ | ~~Título e link do resultado~~ | defeito | **feito em 11/08 e corrigido de novo em 12/08** |
 | ~~1~~ | ~~Provar o alerta em produção~~ | verificação | **feito em 12/08 — ver abaixo** |
 | ~~2~~ | ~~Guarda de prazo inerte~~ | dívida | **feito em 12/08** |
-| ~~3~~ | ~~Casamento semântico~~ | qualidade | **feito em 12/08 no alerta** |
+| ~~3~~ | ~~Casamento semântico~~ | qualidade | **feito em 12/08, alerta e busca** |
 | 4 | Tendência de preço | capacidade nova | dado já pago |
 | 5 | Cobertura onde o dado é fino | dado | dobrável e academia sem amostra |
 
@@ -197,9 +197,20 @@ FE, Ultra e Edge — e os 15 aprovados são todos S25 base.
 rejeitar demais custa muito menos que deixar passar. "capa" pegando "capinha"
 é o comportamento desejado.
 
-**Falta:** aplicar o mesmo casamento na busca (`/agora`), que usa full-text do
-Postgres e tem o problema do "ventilador de mesa". A frase de comparação
-(0,20%) ficou fora — não paga a lista de padrões.
+**Na busca ele ordena, não filtra.** Medido sobre resultados reais: como
+filtro, o casamento por token corta **51% de "fone bluetooth"** — mata "Fone
+**de ouvido** Bluetooth", que é o produto pedido. Exigir palavras coladas
+serve pra nome de modelo, não pra frase que o usuário digita. Então nada some
+da lista; o que casa exato sobe.
+
+**A estatística, sim, passa a sair só dos exatos** quando há 15 ou mais. É o
+ganho maior: a mediana de "galaxy s25" cai de R$ 3.999 para R$ 3.446 (−14%)
+porque hoje mistura S25 Ultra e S25 FE — e essa mediana ancora o preço-alvo
+sugerido no `/cacar` e o "% abaixo do mercado" do alerta, então o viés se
+propagava pro resto do sistema. Abaixo de 15 volta a usar tudo: dobrável tem
+2 anúncios em 3 meses, e mediana de 2 pontos é pior que mediana enviesada.
+
+A frase de comparação (0,20%) ficou fora — não paga a lista de padrões.
 
 ---
 

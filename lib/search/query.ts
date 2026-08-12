@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { casaTermo } from "@/lib/hunts/termo";
 import { aplicarPiso, type PriceStats, priceStats } from "@/lib/search/stats";
 
 export type SearchHit = {
@@ -31,6 +32,12 @@ const LIMITE_PADRAO = 5;
  * neutra* — por isso a consulta não pede ordenação ao banco (ver abaixo).
  */
 const TETO_LINHAS = 2000;
+/**
+ * Mínimo de resultados casando o termo por token pra estatística sair só
+ * deles. Abaixo disso a amostra é pequena demais, e mediana enviesada vale
+ * mais que mediana de 2 pontos — dobrável tem 2 anúncios em 3 meses.
+ */
+const MIN_EXATOS = 15;
 
 export async function buscar(
   db: SupabaseClient,
@@ -91,7 +98,33 @@ export async function buscar(
   // acabou de descartar do ranking — a linha de estatística contradiria a lista.
   const bruta = priceStats(todos.map((t) => t.priceCents));
   const filtrados = bruta ? aplicarPiso(todos, bruta.medianCents) : todos;
-  const stats = priceStats(filtrados.map((t) => t.priceCents));
 
-  return { termo, stats, melhores: filtrados.slice(0, limite) };
+  // Casamento por token entra aqui como **ordenação e recorte da estatística**,
+  // nunca como filtro da lista. Medido em 12/08 sobre resultados reais: usado
+  // como filtro ele corta 51% de "fone bluetooth", matando "Fone de ouvido
+  // Bluetooth" — que é exatamente o produto pedido. Exigir palavras coladas
+  // funciona pra nome de modelo (`galaxy s25`), não pra frase que o usuário
+  // digita. Então nada some da lista; o que casa exato só sobe.
+  const exatos = filtrados.filter((f) => casaTermo(f.text, termo));
+
+  // A estatística sai só dos exatos quando há amostra que sustente. Este é o
+  // ganho medido: a mediana de "galaxy s25" cai de R$ 3.999 para R$ 3.446
+  // (-14%) porque hoje ela mistura preço de S25 Ultra e S25 FE. Essa mediana
+  // ancora o preço-alvo sugerido no `/cacar` e a linha "% abaixo do mercado"
+  // do alerta, então o viés se propaga pro resto do sistema.
+  //
+  // MIN_EXATOS protege o caso oposto: dobrável tem 2 anúncios em 3 meses, e
+  // mediana de 2 pontos é pior que mediana enviesada.
+  const usarExatos = exatos.length >= MIN_EXATOS;
+  const base = usarExatos ? exatos : filtrados;
+  const stats = priceStats(base.map((t) => t.priceCents));
+
+  // `melhores` mantém todo mundo, com os exatos na frente e o preço decidindo
+  // dentro de cada grupo — a lista segue "do mais barato pro mais caro" dentro
+  // do que de fato é o produto.
+  const melhores = usarExatos
+    ? [...exatos, ...filtrados.filter((f) => !exatos.includes(f))]
+    : filtrados;
+
+  return { termo, stats, melhores: melhores.slice(0, limite) };
 }

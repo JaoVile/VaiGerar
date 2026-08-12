@@ -175,25 +175,33 @@ function filaPorChat(): Enfileirar {
  * alerta — o `tick` tem orçamento apertado (`ORCAMENTO_ENTREGA_MS`) e
  * alertas da mesma caça sempre dariam o mesmo número.
  *
- * É enfeite, não requisito: se `buscar` falhar, devolve `null` em vez de
- * propagar o erro — o alerta sai sem a linha de mercado em vez de não sair.
+ * O cache guarda a *promise*, não o valor resolvido: `processarUmAlerta`
+ * roda em paralelo via `Promise.allSettled`, então duas entregas da mesma
+ * caça no mesmo lote podem chegar aqui antes de qualquer uma terminar o
+ * `await buscar(...)`. Gravar só depois do `await` deixaria as duas passarem
+ * pelo `cache.get()` como "vazio" e disparar duas consultas — exatamente o
+ * que o cache existe pra evitar. Gravando a promise antes do `await`, a
+ * segunda chamada concorrente reaproveita a mesma promise em vez de
+ * disparar outra.
+ *
+ * É enfeite, não requisito: se `buscar` falhar, a promise resolve em `null`
+ * (nunca rejeita) — o alerta sai sem a linha de mercado em vez de não sair.
  */
-async function statsDaCaca(
+function statsDaCaca(
   db: SupabaseClient,
   hunt: Hunt,
-  cache: Map<string, PriceStats | null>,
+  cache: Map<string, Promise<PriceStats | null>>,
 ): Promise<PriceStats | null> {
   const emCache = cache.get(hunt.id);
   if (emCache !== undefined) return emCache;
-  try {
-    const { stats } = await buscar(db, hunt.query);
-    cache.set(hunt.id, stats);
-    return stats;
-  } catch (e) {
-    console.error("Estatística da caça falhou:", e instanceof Error ? e.message : e);
-    cache.set(hunt.id, null);
-    return null;
-  }
+  const promessa = buscar(db, hunt.query)
+    .then(({ stats }) => stats)
+    .catch((e: unknown) => {
+      console.error("Estatística da caça falhou:", e instanceof Error ? e.message : e);
+      return null;
+    });
+  cache.set(hunt.id, promessa);
+  return promessa;
 }
 
 export async function processarAlertas(
@@ -279,7 +287,7 @@ export async function processarAlertas(
   // Estatística de mercado por caça: um `Map` por invocação (nunca global —
   // vazaria entre execuções da função serverless), calculado na primeira vez
   // que a caça aparece no lote e reaproveitado pelos alertas seguintes dela.
-  const statsPorHunt = new Map<string, PriceStats | null>();
+  const statsPorHunt = new Map<string, Promise<PriceStats | null>>();
 
   // Cada alerta é independente — claim e leituras vão em paralelo (mesmo
   // padrão do `ingestAll`) pra não estourar o `maxDuration` da rota. Só o
@@ -327,7 +335,7 @@ async function processarUmAlerta(
   leaseCutoffIso: string,
   enfileirar: Enfileirar,
   decorridoMs: () => number,
-  statsPorHunt: Map<string, PriceStats | null>,
+  statsPorHunt: Map<string, Promise<PriceStats | null>>,
 ): Promise<ResultadoAlerta> {
   // Guarda de prazo, checada *antes* do claim de propósito: uma linha
   // adiada aqui não pode ganhar `attempts` nem `claimed_at` — ela tem que

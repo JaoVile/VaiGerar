@@ -345,3 +345,77 @@ describe("processarAlertas — claim com lease", () => {
     expect(maxSimultaneos).toBe(1);
   });
 });
+
+describe("processarAlertas — mediana de mercado (wiring)", () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+  });
+
+  // Preços fora da faixa do usuário (285000–315000 centavos), só pra
+  // alimentar `buscar`: não casam com `hunt` (preço fora do range), então
+  // não viram alerta novo — servem só de "mercado" pro cálculo da mediana.
+  const mercado = [
+    {
+      id: 20,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 351900,
+      store: "loja1",
+      url: "https://t.me/x/20",
+      posted_at: "2026-08-01T09:00:00Z",
+    },
+    {
+      id: 21,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 396800,
+      store: "loja2",
+      url: "https://t.me/x/21",
+      posted_at: "2026-08-02T09:00:00Z",
+    },
+    {
+      id: 22,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 420000,
+      store: "loja3",
+      url: "https://t.me/x/22",
+      posted_at: "2026-08-03T09:00:00Z",
+    },
+    {
+      id: 23,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 449900,
+      store: "loja4",
+      url: "https://t.me/x/23",
+      posted_at: "2026-08-04T09:00:00Z",
+    },
+  ];
+
+  it("a mensagem enviada traz a mediana calculada por `buscar` — prova o wiring, não só o formato", async () => {
+    // Este teste é o que falharia se `statsDaCaca` sempre devolvesse `null`
+    // (wiring quebrado): configura o fake pra `buscar` achar preços de
+    // verdade, roda `processarAlertas` de ponta a ponta, e verifica o texto
+    // que de fato foi pro Telegram — não `formatAlerta` chamado direto com
+    // um `stats` já pronto.
+    const db = createQueryFake({
+      select: {
+        hunts: [huntRow],
+        // `postRow` primeiro: o fake de `.single()` sempre devolve a
+        // primeira linha configurada, e é ela que representa o post do
+        // alerta pendente.
+        posts: [postRow, ...mercado],
+        alerts: [pendente],
+      },
+      update: { alerts: [{ id: 55 }], hunts: [] },
+      upsert: { alerts: [{ id: 55 }] },
+    });
+
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(r.enviados).toBe(1);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [, , html] = sendMessageMock.mock.calls[0];
+    // mediana de {289900, 351900, 396800, 420000, 449900} = 396800;
+    // preço do alerta 289900 contra 396800 → 27% abaixo.
+    expect(html.toLowerCase()).toContain("mediana");
+    expect(html).toMatch(/27%/);
+  });
+});

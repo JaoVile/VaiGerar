@@ -1,5 +1,5 @@
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
-import { escapeHtml } from "@/lib/telegram";
+import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
 export function formatBRL(cents: number): string {
   return `R$ ${(cents / 100).toLocaleString("pt-BR", {
@@ -38,6 +38,118 @@ export function formatSearch(r: SearchResult): string {
     "<i>A mediana é a régua: preço muito abaixo dela costuma ser acessório, não o produto.</i>",
   );
   return linhas.join("\n");
+}
+
+export function formatSearchPagina(
+  r: SearchResult,
+  offset: number,
+  porPagina: number,
+): { texto: string; keyboard?: InlineKeyboard } {
+  if (!r.stats || r.melhores.length === 0) {
+    return { texto: formatSearch(r) };
+  }
+
+  const total = r.melhores.length;
+  const fatia = r.melhores.slice(offset, offset + porPagina);
+
+  const linhas = [
+    `🔎 <b>${escapeHtml(r.termo)}</b> — ${r.stats.count} ofertas em ${MESES_PADRAO} meses`,
+    `menor ${formatBRL(r.stats.minCents)} · mediana <b>${formatBRL(r.stats.medianCents)}</b> · maior ${formatBRL(r.stats.maxCents)}`,
+    `<i>mostrando ${offset + 1}–${Math.min(offset + porPagina, total)} de ${total}</i>`,
+    "",
+  ];
+
+  for (const m of fatia) {
+    const loja = m.store ? ` · ${escapeHtml(m.store)}` : "";
+    linhas.push(
+      `<b>${formatBRL(m.priceCents)}</b>${loja} · ${m.postedAt.slice(0, 10)}`,
+      `<a href="${escapeHtml(m.url)}">${escapeHtml(primeiraLinha(m.text))}</a>`,
+      "",
+    );
+  }
+
+  const botoes: Array<{ text: string; callback_data: string }> = [];
+  if (offset > 0) {
+    botoes.push({
+      text: "◀ anteriores",
+      callback_data: `pag:${Math.max(0, offset - porPagina)}`,
+    });
+  }
+  if (offset + porPagina < total) {
+    botoes.push({
+      text: "mais ofertas ▶",
+      callback_data: `pag:${offset + porPagina}`,
+    });
+  }
+
+  return {
+    texto: linhas.join("\n"),
+    keyboard: botoes.length > 0 ? { inline_keyboard: [botoes] } : undefined,
+  };
+}
+
+export type CacaResumo = {
+  label: string;
+  priceMinCents: number;
+  priceMaxCents: number;
+  melhorAtualCents: number | null;
+  medianaCents: number | null;
+};
+
+/**
+ * Rodapé do `/cacas`. Existe porque o melhor preço listado vem de `buscar`, que
+ * lê a janela inteira de `MESES_PADRAO` meses — pode ser um post morto de três
+ * meses atrás. O alerta, por outro lado, só olha post recente (`JANELA_HORAS`
+ * em `lib/cron/alerts.ts`). Sem este aviso, uma caça cujo alvo está poucos por
+ * cento abaixo do mínimo histórico aparece como "na faixa" em todas as linhas e
+ * nenhum alerta chega — o usuário conclui que o bot achou o preço e fica
+ * esperando por um aviso que nunca vai vir.
+ */
+const RODAPE_CACAS =
+  "<i>O preço acima é o menor do arquivo de " +
+  `${MESES_PADRAO} meses — pode ser de uma oferta já encerrada. ` +
+  "Só te aviso quando ele reaparecer numa oferta recente.</i>";
+
+export function formatCacas(itens: CacaResumo[]): string {
+  const blocos = itens.map((c) => {
+    const linhas = [
+      `🎯 <b>${escapeHtml(c.label)}</b>`,
+      `   sua faixa: ${formatBRL(c.priceMinCents)} a ${formatBRL(c.priceMaxCents)}`,
+    ];
+    if (c.melhorAtualCents === null) {
+      linhas.push(`   <i>nenhuma oferta encontrada em ${MESES_PADRAO} meses</i>`);
+    } else {
+      // Rótulo com a janela explícita: "melhor agora" era mentira — `buscar` lê
+      // os últimos MESES_PADRAO meses, não o que está de pé neste instante.
+      const prefixo = `   melhor em ${MESES_PADRAO} meses: ${formatBRL(c.melhorAtualCents)}`;
+      if (c.melhorAtualCents < c.priceMinCents) {
+        // O piso é o que `casa()` (`lib/hunts/match.ts`) usa pra rejeitar
+        // acessório. Chamar isso de "na faixa" fazia as duas features
+        // discordarem sobre a mesma pergunta: a lista dizia que serve, o motor
+        // de alerta excluía o mesmo preço.
+        linhas.push(
+          `${prefixo} — <b>abaixo do seu piso</b>: barato demais pra ser o produto (costuma ser acessório), por isso não vira alerta`,
+        );
+      } else if (c.melhorAtualCents <= c.priceMaxCents) {
+        linhas.push(`${prefixo} — <b>já apareceu na sua faixa</b>`);
+      } else {
+        const acima = Math.round((c.melhorAtualCents / c.priceMaxCents - 1) * 100);
+        // Arredondar pra baixo dava "0% acima do seu teto", que se lê como
+        // contradição — qualquer coisa entre +0,01% e +0,49% caía aqui.
+        linhas.push(
+          acima === 0
+            ? `${prefixo} — logo acima do seu teto`
+            : `${prefixo} — ${acima}% acima do seu teto`,
+        );
+      }
+    }
+    if (c.medianaCents !== null) {
+      linhas.push(`   mediana ${MESES_PADRAO} meses: ${formatBRL(c.medianaCents)}`);
+    }
+    return linhas.join("\n");
+  });
+  if (blocos.length === 0) return "";
+  return `${blocos.join("\n\n")}\n\n${RODAPE_CACAS}`;
 }
 
 export function formatAjuda(): string {

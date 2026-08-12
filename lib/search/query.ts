@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { type PriceStats, priceStats } from "@/lib/search/stats";
+import { aplicarPiso, type PriceStats, priceStats } from "@/lib/search/stats";
 
 export type SearchHit = {
   text: string;
@@ -68,20 +68,27 @@ export async function buscar(
     url: string;
   }>;
 
-  // Só "melhores" depende da ordem; a estatística usa `linhas` como conjunto.
-  const ordenadas = [...linhas].sort((a, b) => a.price_cents - b.price_cents);
+  // Só "melhores" depende da ordem; a estatística e o piso usam o conjunto,
+  // não a ordem. Ordenar aqui (em vez de só na hora de fatiar) mantém a
+  // invariante que o teste "NÃO pede ordenação ao banco" já cobra: a ordem
+  // do banco é irrelevante, quem ordena por preço é sempre o cliente.
+  const todos = linhas
+    .map((l) => ({
+      text: l.text,
+      priceCents: l.price_cents,
+      store: l.store,
+      postedAt: l.posted_at,
+      url: l.url,
+    }))
+    .sort((a, b) => a.priceCents - b.priceCents);
 
-  const melhores: SearchHit[] = ordenadas.slice(0, limite).map((l) => ({
-    text: l.text,
-    priceCents: l.price_cents,
-    store: l.store,
-    postedAt: l.posted_at,
-    url: l.url,
-  }));
+  // Duas passadas de propósito: a mediana bruta define o piso, e a estatística
+  // final é recalculada sobre o conjunto já filtrado. Sem a segunda passada, o
+  // "menor preço" mostrado ao usuário continuaria sendo o acessório que o piso
+  // acabou de descartar do ranking — a linha de estatística contradiria a lista.
+  const bruta = priceStats(todos.map((t) => t.priceCents));
+  const filtrados = bruta ? aplicarPiso(todos, bruta.medianCents) : todos;
+  const stats = priceStats(filtrados.map((t) => t.priceCents));
 
-  return {
-    termo,
-    stats: priceStats(linhas.map((l) => l.price_cents)),
-    melhores,
-  };
+  return { termo, stats, melhores: filtrados.slice(0, limite) };
 }

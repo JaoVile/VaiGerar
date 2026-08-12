@@ -168,6 +168,7 @@ const METODOS_CADEIA = [
   "order",
   "limit",
   "range",
+  "textSearch",
 ] as const;
 
 export function createQueryFake(respostas: QueryFakeRespostas = {}): QueryFake {

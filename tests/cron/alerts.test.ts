@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { formatBRL } from "@/lib/bot/format";
 import { formatAlerta, processarAlertas } from "@/lib/cron/alerts";
 import { TelegramRateLimitError } from "@/lib/telegram";
 import { argsDe, createQueryFake, todasAsChamadas } from "@/tests/helpers/fake-db";
@@ -15,6 +16,7 @@ const hunt = {
   id: "h1",
   chatId: 7,
   label: "Galaxy S25+",
+  query: "s25 plus",
   termsAny: ["s25+"],
   termsNone: [],
   priceMinCents: 285000,
@@ -32,31 +34,62 @@ const post = {
 
 describe("formatAlerta", () => {
   it("mostra o rótulo da caça e o preço", () => {
-    const s = formatAlerta(hunt, post);
+    const s = formatAlerta(hunt, post, null);
     expect(s).toContain("Galaxy S25+");
     expect(s).toContain("R$ 2.899,00");
   });
 
   it("mostra a loja e o link do post", () => {
-    const s = formatAlerta(hunt, post);
+    const s = formatAlerta(hunt, post, null);
     expect(s).toContain("amazon");
     expect(s).toContain("https://t.me/x/1");
   });
 
   it("escapa HTML vindo do texto do post", () => {
-    const s = formatAlerta(hunt, { ...post, text: "TV <b>50</b> & tal" });
+    const s = formatAlerta(hunt, { ...post, text: "TV <b>50</b> & tal" }, null);
     expect(s).toContain("&lt;b&gt;");
   });
 
   it("mostra a data do post — oferta antiga tem que se denunciar", () => {
     // Sem a data, "R$ 2.899,00 — 8% abaixo do teto" parece oferta de agora
     // mesmo quando não é; o usuário só descobre clicando.
-    expect(formatAlerta(hunt, post)).toContain("2026-08-10");
+    expect(formatAlerta(hunt, post, null)).toContain("2026-08-10");
   });
 
   it("diz quanto está abaixo do teto da faixa", () => {
     // teto 315000, preço 289900 → 8% abaixo
-    expect(formatAlerta(hunt, post)).toMatch(/8%/);
+    expect(formatAlerta(hunt, post, null)).toMatch(/8%/);
+  });
+});
+
+describe("formatAlerta com contexto de mercado", () => {
+  const stats = {
+    count: 91,
+    minCents: 351900,
+    medianCents: 396800,
+    maxCents: 449900,
+  };
+
+  it("diz quanto está abaixo da mediana quando há estatística", () => {
+    const s = formatAlerta(hunt, post, stats);
+    // 289900 contra mediana 396800 → 27% abaixo
+    expect(s).toMatch(/27%/);
+    expect(s.toLowerCase()).toContain("mediana");
+  });
+
+  it("mantém a leitura da faixa do usuário", () => {
+    expect(formatAlerta(hunt, post, stats).toLowerCase()).toContain("faixa");
+  });
+
+  it("omite a linha de mercado quando não há estatística", () => {
+    const s = formatAlerta(hunt, post, null);
+    expect(s.toLowerCase()).not.toContain("mediana");
+    expect(s).toContain(formatBRL(post.priceCents));
+  });
+
+  it("não quebra quando o preço está acima da mediana", () => {
+    const caro = { ...post, priceCents: 420000 };
+    expect(() => formatAlerta(hunt, caro, stats)).not.toThrow();
   });
 });
 
@@ -66,6 +99,7 @@ const huntRow = {
   id: "h1",
   chat_id: 7,
   label: "Galaxy S25+",
+  query: "s25 plus",
   terms_any: ["s25+"],
   terms_none: [],
   price_min_cents: 285000,
@@ -309,5 +343,79 @@ describe("processarAlertas — claim com lease", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(3);
     // mesmo chat (7) nos três: o Telegram limita ~1 msg/s por chat.
     expect(maxSimultaneos).toBe(1);
+  });
+});
+
+describe("processarAlertas — mediana de mercado (wiring)", () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+  });
+
+  // Preços fora da faixa do usuário (285000–315000 centavos), só pra
+  // alimentar `buscar`: não casam com `hunt` (preço fora do range), então
+  // não viram alerta novo — servem só de "mercado" pro cálculo da mediana.
+  const mercado = [
+    {
+      id: 20,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 351900,
+      store: "loja1",
+      url: "https://t.me/x/20",
+      posted_at: "2026-08-01T09:00:00Z",
+    },
+    {
+      id: 21,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 396800,
+      store: "loja2",
+      url: "https://t.me/x/21",
+      posted_at: "2026-08-02T09:00:00Z",
+    },
+    {
+      id: 22,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 420000,
+      store: "loja3",
+      url: "https://t.me/x/22",
+      posted_at: "2026-08-03T09:00:00Z",
+    },
+    {
+      id: 23,
+      text: "Galaxy S25+ 512GB",
+      price_cents: 449900,
+      store: "loja4",
+      url: "https://t.me/x/23",
+      posted_at: "2026-08-04T09:00:00Z",
+    },
+  ];
+
+  it("a mensagem enviada traz a mediana calculada por `buscar` — prova o wiring, não só o formato", async () => {
+    // Este teste é o que falharia se `statsDaCaca` sempre devolvesse `null`
+    // (wiring quebrado): configura o fake pra `buscar` achar preços de
+    // verdade, roda `processarAlertas` de ponta a ponta, e verifica o texto
+    // que de fato foi pro Telegram — não `formatAlerta` chamado direto com
+    // um `stats` já pronto.
+    const db = createQueryFake({
+      select: {
+        hunts: [huntRow],
+        // `postRow` primeiro: o fake de `.single()` sempre devolve a
+        // primeira linha configurada, e é ela que representa o post do
+        // alerta pendente.
+        posts: [postRow, ...mercado],
+        alerts: [pendente],
+      },
+      update: { alerts: [{ id: 55 }], hunts: [] },
+      upsert: { alerts: [{ id: 55 }] },
+    });
+
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(r.enviados).toBe(1);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [, , html] = sendMessageMock.mock.calls[0];
+    // mediana de {289900, 351900, 396800, 420000, 449900} = 396800;
+    // preço do alerta 289900 contra 396800 → 27% abaixo.
+    expect(html.toLowerCase()).toContain("mediana");
+    expect(html).toMatch(/27%/);
   });
 });

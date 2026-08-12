@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
-import { desativarHunt } from "@/lib/bot/hunts-repo";
+import { desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 
 function fakeDb(rowsAfetadas: unknown[]) {
   const filtros: Array<[string, unknown]> = [];
@@ -46,5 +46,45 @@ describe("desativarHunt", () => {
     };
     const db = { from: () => chain } as unknown as SupabaseClient;
     await expect(desativarHunt(db, "abc", 7)).rejects.toThrow(/abc.*boom/);
+  });
+});
+
+describe("listarHunts", () => {
+  it("pede a coluna query — necessária para consultar o mercado de cada caça", async () => {
+    let colunasPedidas = "";
+    const chain = {
+      select: (colunas: string) => {
+        colunasPedidas = colunas;
+        return chain;
+      },
+      eq: () => chain,
+      order: () =>
+        Promise.resolve({
+          data: [
+            {
+              id: "abc",
+              label: "s25 plus",
+              query: "s25 plus",
+              price_min_cents: 285000,
+              price_max_cents: 315000,
+              is_active: true,
+            },
+          ],
+          error: null,
+        }),
+    };
+    const db = { from: () => chain } as unknown as SupabaseClient;
+    const hs = await listarHunts(db, 7);
+    expect(colunasPedidas).toContain("query");
+    expect(hs).toEqual([
+      {
+        id: "abc",
+        label: "s25 plus",
+        query: "s25 plus",
+        priceMinCents: 285000,
+        priceMaxCents: 315000,
+        isActive: true,
+      },
+    ]);
   });
 });

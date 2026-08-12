@@ -5,11 +5,16 @@ import { MESES_PADRAO } from "@/lib/search/query";
 import type { PriceStats } from "@/lib/search/stats";
 import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
-export type Step = "ask_product" | "ask_price" | "ask_tolerance" | "confirm";
+export type Step = "ask_product" | "ask_price" | "ask_tolerance" | "confirm" | "resultado";
 export type FlowData = {
   produto?: string;
   alvoCents?: number;
   tolerancePct?: number;
+  // Usado só pela sessão de busca (flow "busca", step "resultado"), guardada
+  // em `lib/bot/router.ts`. Vive aqui, e não num tipo próprio, porque
+  // `bot_sessions.data` é uma coluna jsonb única por chat compartilhada pelos
+  // dois fluxos — ver `salvarSessao`/`lerSessao` em `lib/bot/session.ts`.
+  termo?: string;
 };
 export type FlowOut = {
   texto: string;

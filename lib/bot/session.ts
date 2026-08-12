@@ -3,33 +3,42 @@ import type { FlowData, Step } from "@/lib/bot/flows/new-hunt";
 
 const EXPIRA_MIN = 10;
 
+export const FLOW_BUSCA = "busca";
+export const FLOW_CACA = "new_hunt";
+
 export async function lerSessao(
   db: SupabaseClient,
   chatId: number,
-): Promise<{ step: Step; data: FlowData } | null> {
+): Promise<{ flow: string; step: Step; data: FlowData } | null> {
   const { data, error } = await db
     .from("bot_sessions")
-    .select("step,data,expires_at")
+    .select("flow,step,data,expires_at")
     .eq("chat_id", chatId)
     .maybeSingle();
   if (error) throw new Error(`Lendo sessão de ${chatId}: ${error.message}`);
   if (!data) return null;
   if (new Date(data.expires_at as string) < new Date()) return null;
-  return { step: data.step as Step, data: data.data as FlowData };
+  return {
+    flow: data.flow as string,
+    step: data.step as Step,
+    data: data.data as FlowData,
+  };
 }
 
 export async function salvarSessao(
   db: SupabaseClient,
   chatId: number,
+  flow: string,
   step: Step,
   dados: FlowData,
   agora: Date,
+  expiraMin: number = EXPIRA_MIN,
 ): Promise<void> {
-  const expira = new Date(agora.getTime() + EXPIRA_MIN * 60_000);
+  const expira = new Date(agora.getTime() + expiraMin * 60_000);
   const { error } = await db.from("bot_sessions").upsert(
     {
       chat_id: chatId,
-      flow: "new_hunt",
+      flow,
       step,
       data: dados,
       updated_at: agora.toISOString(),

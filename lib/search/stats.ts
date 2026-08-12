@@ -22,3 +22,25 @@ export function priceStats(cents: number[]): PriceStats | null {
     maxCents: ord[ord.length - 1],
   };
 }
+
+/**
+ * Fração da mediana abaixo da qual um resultado é considerado acessório, não
+ * o produto buscado. Medido contra o arquivo real em 2026-08-11: 0.25 corta a
+ * forma de silicone de R$10 numa busca por "air fryer" (mediana R$290) mas
+ * mantém o Air Fryer Britânia de R$93; 0.40 já descarta earbud legítimo de
+ * R$54 numa busca por "fone bluetooth" (mediana R$136).
+ *
+ * Isto NÃO resolve casamento semântico — "ventilador de mesa" numa busca por
+ * "mesa" tem preço plausível e continua passando. Ver `docs/FOLLOW-UPS.md`.
+ */
+export const PISO_FRACAO = 0.25;
+
+/** Descarta itens absurdamente abaixo da mediana. Puro — não altera a entrada. */
+export function aplicarPiso<T extends { priceCents: number }>(
+  itens: T[],
+  medianaCents: number,
+  fracao: number = PISO_FRACAO,
+): T[] {
+  const piso = medianaCents * fracao;
+  return itens.filter((i) => i.priceCents >= piso);
+}

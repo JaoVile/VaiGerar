@@ -98,4 +98,19 @@ describe("buscar", () => {
     const db = { from: vi.fn(() => chain) } as unknown as SupabaseClient;
     await expect(buscar(db, "tv")).rejects.toThrow(/tv.*boom/);
   });
+
+  it("descarta acessório muito abaixo da mediana e recalcula a estatística", async () => {
+    // mediana bruta de [10, 900, 1000, 1100] é 950 → piso 237,50
+    const db = fakeDb([linha(10), linha(900), linha(1000), linha(1100)]);
+    const r = await buscar(db, "air fryer");
+    expect(r.melhores.map((m) => m.priceCents)).toEqual([900, 1000, 1100]);
+    expect(r.stats?.count).toBe(3);
+    expect(r.stats?.minCents).toBe(900);
+  });
+
+  it("não descarta nada quando os preços são coerentes entre si", async () => {
+    const db = fakeDb([linha(900), linha(1000), linha(1100)]);
+    const r = await buscar(db, "galaxy s25");
+    expect(r.stats?.count).toBe(3);
+  });
 });

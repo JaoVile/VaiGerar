@@ -67,6 +67,23 @@ export async function sendMessage(
   });
 }
 
+export async function editMessageText(
+  token: string,
+  chatId: number,
+  messageId: number,
+  html: string,
+  opts: { keyboard?: InlineKeyboard } = {},
+): Promise<void> {
+  await chamar(token, "editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text: html,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
+  });
+}
+
 export async function answerCallbackQuery(token: string, id: string): Promise<void> {
   await chamar(token, "answerCallbackQuery", { callback_query_id: id });
 }

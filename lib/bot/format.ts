@@ -1,5 +1,5 @@
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
-import { escapeHtml } from "@/lib/telegram";
+import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
 export function formatBRL(cents: number): string {
   return `R$ ${(cents / 100).toLocaleString("pt-BR", {
@@ -38,6 +38,54 @@ export function formatSearch(r: SearchResult): string {
     "<i>A mediana é a régua: preço muito abaixo dela costuma ser acessório, não o produto.</i>",
   );
   return linhas.join("\n");
+}
+
+export function formatSearchPagina(
+  r: SearchResult,
+  offset: number,
+  porPagina: number,
+): { texto: string; keyboard?: InlineKeyboard } {
+  if (!r.stats || r.melhores.length === 0) {
+    return { texto: formatSearch(r) };
+  }
+
+  const total = r.melhores.length;
+  const fatia = r.melhores.slice(offset, offset + porPagina);
+
+  const linhas = [
+    `🔎 <b>${escapeHtml(r.termo)}</b> — ${r.stats.count} ofertas em ${MESES_PADRAO} meses`,
+    `menor ${formatBRL(r.stats.minCents)} · mediana <b>${formatBRL(r.stats.medianCents)}</b> · maior ${formatBRL(r.stats.maxCents)}`,
+    `<i>mostrando ${offset + 1}–${Math.min(offset + porPagina, total)} de ${total}</i>`,
+    "",
+  ];
+
+  for (const m of fatia) {
+    const loja = m.store ? ` · ${escapeHtml(m.store)}` : "";
+    linhas.push(
+      `<b>${formatBRL(m.priceCents)}</b>${loja} · ${m.postedAt.slice(0, 10)}`,
+      `<a href="${escapeHtml(m.url)}">${escapeHtml(primeiraLinha(m.text))}</a>`,
+      "",
+    );
+  }
+
+  const botoes: Array<{ text: string; callback_data: string }> = [];
+  if (offset > 0) {
+    botoes.push({
+      text: "◀ anteriores",
+      callback_data: `pag:${Math.max(0, offset - porPagina)}`,
+    });
+  }
+  if (offset + porPagina < total) {
+    botoes.push({
+      text: "mais ofertas ▶",
+      callback_data: `pag:${offset + porPagina}`,
+    });
+  }
+
+  return {
+    texto: linhas.join("\n"),
+    keyboard: botoes.length > 0 ? { inline_keyboard: [botoes] } : undefined,
+  };
 }
 
 export function formatAjuda(): string {

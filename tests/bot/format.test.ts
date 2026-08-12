@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAjuda, formatBRL, formatSearch } from "@/lib/bot/format";
+import { formatAjuda, formatBRL, formatSearch, formatSearchPagina } from "@/lib/bot/format";
 import { MESES_PADRAO } from "@/lib/search/query";
 import { escapeHtml } from "@/lib/telegram";
 
@@ -78,5 +78,71 @@ describe("formatAjuda", () => {
 
   it("usa a janela real da busca, sem número escrito à mão", () => {
     expect(formatAjuda()).toContain(`${MESES_PADRAO} meses`);
+  });
+});
+
+describe("formatSearchPagina", () => {
+  const hit = (p: number) => ({
+    text: `Produto ${p}`,
+    priceCents: p,
+    store: "amazon",
+    postedAt: "2026-08-01T12:00:00Z",
+    url: `https://t.me/x/${p}`,
+  });
+  const r = {
+    termo: "air fryer",
+    stats: { count: 12, minCents: 100, medianCents: 500, maxCents: 900 },
+    melhores: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200].map(hit),
+  };
+
+  it("mostra só a fatia da página pedida", () => {
+    const p = formatSearchPagina(r, 0, 5);
+    expect(p.texto).toContain("Produto 100");
+    expect(p.texto).not.toContain("Produto 600");
+  });
+
+  it("indica a posição na contagem total", () => {
+    expect(formatSearchPagina(r, 5, 5).texto).toContain("6");
+    expect(formatSearchPagina(r, 5, 5).texto).toContain("12");
+  });
+
+  it("na primeira página oferece só avançar", () => {
+    const cbs =
+      formatSearchPagina(r, 0, 5)
+        .keyboard?.inline_keyboard.flat()
+        .map((b) => b.callback_data) ?? [];
+    expect(cbs).toContain("pag:5");
+    expect(cbs.some((c) => c === "pag:-5")).toBe(false);
+  });
+
+  it("no meio oferece voltar e avançar", () => {
+    const cbs =
+      formatSearchPagina(r, 5, 5)
+        .keyboard?.inline_keyboard.flat()
+        .map((b) => b.callback_data) ?? [];
+    expect(cbs).toContain("pag:0");
+    expect(cbs).toContain("pag:10");
+  });
+
+  it("na última página não oferece avançar", () => {
+    const cbs =
+      formatSearchPagina(r, 10, 5)
+        .keyboard?.inline_keyboard.flat()
+        .map((b) => b.callback_data) ?? [];
+    expect(cbs).toContain("pag:5");
+    expect(cbs.some((c) => c === "pag:15")).toBe(false);
+  });
+
+  it("sem resultados não oferece botão nenhum", () => {
+    const vazio = { termo: "xyz", stats: null, melhores: [] };
+    expect(formatSearchPagina(vazio, 0, 5).keyboard).toBeUndefined();
+  });
+
+  it("todo callback_data cabe em 64 bytes", () => {
+    for (const off of [0, 5, 10]) {
+      for (const b of formatSearchPagina(r, off, 5).keyboard?.inline_keyboard.flat() ?? []) {
+        expect(Buffer.byteLength(b.callback_data, "utf8")).toBeLessThanOrEqual(64);
+      }
+    }
   });
 });

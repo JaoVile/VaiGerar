@@ -83,6 +83,21 @@ describe("extrairEntrada", () => {
     });
     expect(r).toBeNull();
   });
+
+  it("extrai o messageId do callback, necessário para editar a mensagem", () => {
+    const r = extrairEntrada({
+      callback_query: {
+        id: "cb",
+        data: "pag:5",
+        message: { message_id: 42, chat: { id: 7 } },
+      },
+    });
+    expect(r?.messageId).toBe(42);
+  });
+
+  it("mensagem comum não traz messageId de edição", () => {
+    expect(extrairEntrada({ message: { chat: { id: 7 }, text: "oi" } })?.messageId).toBeUndefined();
+  });
 });
 
 describe("autorizado", () => {
@@ -122,7 +137,10 @@ describe("tratar /cacas", () => {
   });
 
   it("lista as caças ativas com a faixa de preço", async () => {
-    await tratar(dbComHunts([hunt("s25 plus")]), "tok", { chatId: 7, texto: "/cacas" });
+    await tratar(dbComHunts([hunt("s25 plus")]), "tok", {
+      chatId: 7,
+      texto: "/cacas",
+    });
     const [, , html] = sendMessageMock.mock.calls[0];
     expect(html).toContain("s25 plus");
     expect(html).toContain("R$ 2.850,00");
@@ -132,7 +150,10 @@ describe("tratar /cacas", () => {
   // ("can't parse entities"), o envio lança — e o botão de excluir a caça
   // que trava a lista vive DENTRO da mensagem que não consegue ser enviada.
   it('escapa "<" e "&" do rótulo da caça na listagem', async () => {
-    await tratar(dbComHunts([hunt("tv <50 & cia")]), "tok", { chatId: 7, texto: "/cacas" });
+    await tratar(dbComHunts([hunt("tv <50 & cia")]), "tok", {
+      chatId: 7,
+      texto: "/cacas",
+    });
     const [, , html] = sendMessageMock.mock.calls[0];
     expect(html).toContain("tv &lt;50 &amp; cia");
     expect(html).not.toContain("<50");

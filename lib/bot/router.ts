@@ -5,12 +5,14 @@ import {
   formatAjuda,
   formatCacas,
   formatCupons,
+  formatTendencia,
   formatSearchPagina,
 } from "@/lib/bot/format";
 import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 import { FLOW_BUSCA, FLOW_CACA, lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
 import { buscarCupons } from "@/lib/search/coupons";
 import { buscar } from "@/lib/search/query";
+import { tendencia } from "@/lib/search/trend";
 import { answerCallbackQuery, editMessageText, sendMessage } from "@/lib/telegram";
 
 export type Update = {
@@ -213,6 +215,24 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
     const out = iniciar();
     await salvarSessao(db, chatId, FLOW_CACA, "ask_product", out.data, new Date());
     await sendMessage(token, chatId, out.texto);
+    return;
+  }
+
+  if (comando === "/tendencia" || comando === "/tendência") {
+    const termo = limpo.slice(comando.length).trim();
+    if (!termo) {
+      await sendMessage(
+        token,
+        chatId,
+        [
+          "Use assim: <code>/tendencia galaxy s25 plus</code>",
+          "",
+          'Só funciona com <b>modelo específico</b>. Categoria ("air fryer", "notebook") não tem tendência calculável — o preço mediano sobe e desce porque o mix de anúncios muda, não o mercado.',
+        ].join("\n"),
+      );
+      return;
+    }
+    await sendMessage(token, chatId, formatTendencia(await tendencia(db, termo)));
     return;
   }
 

@@ -14,7 +14,7 @@ e as decisões a tomar antes de escrever código.
 | ~~1~~ | ~~Provar o alerta em produção~~ | verificação | **feito em 12/08 — ver abaixo** |
 | ~~2~~ | ~~Guarda de prazo inerte~~ | dívida | **feito em 12/08** |
 | ~~3~~ | ~~Casamento semântico~~ | qualidade | **feito em 12/08, alerta e busca** |
-| 4 | Tendência de preço | capacidade nova | dado já pago |
+| ~~4~~ | ~~Tendência de preço~~ | capacidade nova | **feito em 12/08 — e recusa mais do que responde** |
 | 5 | Cobertura onde o dado é fino | dado | dobrável e academia sem amostra |
 
 Os itens 0 e 1 são baratos e devem vir juntos. O 2 é dívida com risco. O 3 é a
@@ -241,7 +241,48 @@ detectar contexto ("concorre com", "igual ao", "melhor que"), que é lista de
 padrões, ou uma camada LLM. Decidir até onde ir antes de começar; a parte de
 limite de palavra é barata e cobre a maioria.
 
-## 4. Tendência de preço
+## 4. Tendência de preço — FEITO em 2026-08-12, com uma ressalva grande
+
+**O mockup deste plano não sobrevive ao dado real.** Mediana por mês, medida
+no arquivo:
+
+```
+galaxy s25 plus   R$ 4.174 -> R$ 3.999 -> R$ 3.799       tendência de verdade
+air fryer         R$ 190 -> R$ 314 -> R$ 286 -> R$ 363   ruído
+fone bluetooth    R$ 82 -> R$ 145 -> R$ 142 -> R$ 85     ruído
+```
+
+Para "air fryer" a conta diria **"subiu 91% desde maio"** — falso. O que mudou
+foi o *mix de anúncios* (fritadeira de 3L num mês, de 12L no outro), não o
+preço de mercado. Mediana mensal sobre conjunto heterogêneo mede composição,
+não preço.
+
+**O separador é a dispersão** `(p75 - p25) / mediana`, medida:
+
+| termo | dispersão | |
+|---|---:|---|
+| galaxy s25 plus | 0,02 | produto único |
+| galaxy s25 | 0,04 | produto único |
+| notebook | 0,42 | categoria |
+| air fryer | 0,65 | categoria |
+| fone bluetooth | 0,93 | categoria |
+
+Separação de mais de dez vezes, então `LIMITE_DISPERSAO = 0,25` não é número
+a dedo — qualquer coisa entre 0,05 e 0,40 classifica igual.
+
+`/tendencia <modelo>` desenha o gráfico quando dá e **recusa explicando**
+quando não dá, em três motivos distintos (categoria, histórico curto, sem
+dado). Recusar é a resposta certa: reta falsa sobre "comprar ou esperar" é
+pior que não responder.
+
+**A janela de 6 meses, que este plano sugeria reavaliar, saiu de cogitação:**
+com 25 canais o platô de 3 meses já é 232 MB de 500; 6 meses seriam ~464 MB
+(93%). Fica em 3 meses, ou seja, 3 a 4 pontos no gráfico.
+
+---
+
+## 4-bis. Proposta original (mantida para histórico)
+
 
 **Oportunidade:** o arquivo tem 3 meses de preço por produto e só responde o
 agregado. A pergunta que originou o projeto — *comprar agora ou esperar?* — já

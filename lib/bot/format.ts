@@ -1,4 +1,5 @@
 import type { ResultadoCupons } from "@/lib/search/coupons";
+import type { Tendencia } from "@/lib/search/trend";
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
 import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
@@ -291,6 +292,108 @@ export function formatCupons(r: ResultadoCupons, agora: Date = new Date()): stri
   return linhas.join("\n");
 }
 
+const MES_CURTO = [
+  "jan",
+  "fev",
+  "mar",
+  "abr",
+  "mai",
+  "jun",
+  "jul",
+  "ago",
+  "set",
+  "out",
+  "nov",
+  "dez",
+];
+
+/** "2026-08" -> "ago". */
+function rotuloMes(iso: string): string {
+  const n = Number(iso.slice(5, 7));
+  return MES_CURTO[n - 1] ?? iso;
+}
+
+const LARGURA_BARRA = 14;
+
+/**
+ * Barra proporcional ao preço, mas com a escala começando em 90% do menor mês
+ * em vez de em zero.
+ *
+ * Com base zero as barras ficam todas do mesmo tamanho: uma queda de R$ 4.174
+ * para R$ 3.799 é 9%, e 9% de diferença em 14 blocos é um bloco — o gráfico
+ * não mostraria nada. A escala truncada é o que torna a variação visível, e
+ * por isso os valores em reais ficam sempre ao lado: a barra é a forma da
+ * curva, o número é a grandeza.
+ */
+function barra(cents: number, minCents: number, maxCents: number): string {
+  const piso = minCents * 0.9;
+  const vao = Math.max(maxCents - piso, 1);
+  const n = Math.max(1, Math.round(((cents - piso) / vao) * LARGURA_BARRA));
+  return "▇".repeat(n);
+}
+
+export function formatTendencia(t: Tendencia): string {
+  const termo = escapeHtml(t.termo);
+
+  if (!t.calculavel) {
+    if (t.motivo === "categoria") {
+      return [
+        `Não dá pra calcular tendência de <b>${termo}</b>.`,
+        "",
+        "O preço varia demais entre os anúncios — é uma <b>categoria</b>, não um produto. A mediana mensal subiria e desceria porque o <b>mix</b> de anúncios muda (fritadeira de 3L num mês, de 12L no outro), não porque o mercado mudou.",
+        "",
+        "Tente um modelo específico: <code>/tendencia galaxy s25 plus</code>",
+      ].join("\n");
+    }
+    if (t.motivo === "poucos-meses") {
+      return [
+        `Ainda não tenho <b>histórico</b> suficiente de <b>${termo}</b>.`,
+        "",
+        `Preciso de pelo menos 3 meses com anúncio suficiente em cada um. Hoje tenho ${t.meses.length}.`,
+        "",
+        `O arquivo guarda ${MESES_PADRAO} meses e vai enchendo sozinho — tente de novo em algumas semanas.`,
+      ].join("\n");
+    }
+    return `Não achei anúncio de <b>${termo}</b> nos últimos ${MESES_PADRAO} meses.`;
+  }
+
+  const valores = t.meses.map((m) => m.medianCents);
+  const min = Math.min(...valores);
+  const max = Math.max(...valores);
+
+  const linhas = [`📉 <b>${termo}</b> — mediana por mês`, ""];
+  for (const m of t.meses) {
+    linhas.push(
+      `<code>${rotuloMes(m.mes)} ${formatBRL(m.medianCents).padStart(11)}</code> ${barra(m.medianCents, min, max)}`,
+    );
+  }
+
+  const pctMes = Math.abs(t.variacaoPctMes ?? 0);
+  const total = t.variacaoPct ?? 0;
+  linhas.push("");
+  if (Math.abs(total) < 2) {
+    linhas.push("<b>→ estável</b> — o preço praticamente não mexeu no período.");
+    linhas.push("<i>Sem sinal de que esperar vá ajudar.</i>");
+  } else if (total < 0) {
+    linhas.push(`<b>↓ caindo ~${pctMes.toFixed(0)}% ao mês</b> (${total.toFixed(0)}% no período)`);
+    linhas.push("<i>Se dá pra esperar, esperar tem jogado a favor.</i>");
+  } else {
+    linhas.push(
+      `<b>↑ subindo ~${pctMes.toFixed(0)}% ao mês</b> (+${total.toFixed(0)}% no período)`,
+    );
+    linhas.push("<i>Esperar não tem ajudado neste aqui.</i>");
+  }
+
+  // A ressalva fica sempre: cada ponto é a mediana de anúncios diferentes, não
+  // o mesmo produto acompanhado no tempo. Sem dizer isso, o gráfico promete
+  // uma precisão que o dado não tem.
+  linhas.push(
+    "",
+    "<i>Cada mês é a mediana dos anúncios daquele mês, não o mesmo produto seguido no tempo.</i>",
+  );
+  return linhas.join("\n");
+}
+
 export type CacaResumo = {
   label: string;
   priceMinCents: number;
@@ -399,6 +502,14 @@ export function formatAjuda(): string {
     "4️⃣ tolerância (botões de 5%, 10% e 15%, cada um mostrando a faixa em reais)",
     "",
     "Depois disso eu te aviso sozinho quando aparecer na faixa. Não precisa ficar olhando.",
+    "",
+    "<b>━━━ Comprar agora ou esperar ━━━</b>",
+    "",
+    "/tendencia &lt;modelo&gt; — como o preço andou nos últimos meses:",
+    "",
+    "<code>/tendencia galaxy s25 plus</code>",
+    "",
+    'Só vale pra <b>modelo específico</b>. Categoria como "air fryer" eu recuso, e explico: a mediana mensal mexeria porque o mix de anúncios muda, não porque o mercado mudou.',
     "",
     "<b>━━━ Cupom da loja ━━━</b>",
     "",

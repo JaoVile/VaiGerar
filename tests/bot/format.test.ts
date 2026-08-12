@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatAjuda, formatBRL, formatSearch, formatSearchPagina } from "@/lib/bot/format";
+import {
+  formatAjuda,
+  formatBRL,
+  formatCacas,
+  formatSearch,
+  formatSearchPagina,
+} from "@/lib/bot/format";
 import { MESES_PADRAO } from "@/lib/search/query";
 import { escapeHtml } from "@/lib/telegram";
 
@@ -144,5 +150,44 @@ describe("formatSearchPagina", () => {
         expect(Buffer.byteLength(b.callback_data, "utf8")).toBeLessThanOrEqual(64);
       }
     }
+  });
+});
+
+describe("formatCacas", () => {
+  const base = {
+    label: "Galaxy S25 Plus",
+    priceMinCents: 270000,
+    priceMaxCents: 330000,
+    melhorAtualCents: 351912,
+    medianaCents: 396800,
+  };
+
+  it("mostra a faixa pedida", () => {
+    const s = formatCacas([base]);
+    expect(s).toContain(formatBRL(270000));
+    expect(s).toContain(formatBRL(330000));
+  });
+
+  it("mostra o melhor preço atual e quanto falta cair", () => {
+    const s = formatCacas([base]);
+    expect(s).toContain(formatBRL(351912));
+    // 351912 contra teto 330000 → 7% acima
+    expect(s).toMatch(/7%/);
+  });
+
+  it("avisa quando já está dentro da faixa", () => {
+    const s = formatCacas([{ ...base, melhorAtualCents: 320000 }]);
+    expect(s.toLowerCase()).toContain("dentro da faixa");
+  });
+
+  it("lida com caça sem nenhuma oferta conhecida", () => {
+    const s = formatCacas([{ ...base, melhorAtualCents: null, medianaCents: null }]);
+    expect(s.toLowerCase()).toContain("nenhuma oferta");
+  });
+
+  it("escapa o rótulo do usuário", () => {
+    const s = formatCacas([{ ...base, label: "tv <50 & cia" }]);
+    expect(s).toContain("&lt;50");
+    expect(s).not.toContain("<50 &");
   });
 });

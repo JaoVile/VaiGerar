@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { iniciar, receber, type Step } from "@/lib/bot/flows/new-hunt";
-import { formatAjuda, formatBRL, formatSearchPagina } from "@/lib/bot/format";
+import { type CacaResumo, formatAjuda, formatCacas, formatSearchPagina } from "@/lib/bot/format";
 import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 import { FLOW_BUSCA, FLOW_CACA, lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
 import { buscar } from "@/lib/search/query";
-import { answerCallbackQuery, editMessageText, escapeHtml, sendMessage } from "@/lib/telegram";
+import { answerCallbackQuery, editMessageText, sendMessage } from "@/lib/telegram";
 
 export type Update = {
   message?: { chat: { id: number }; text?: string };
@@ -164,17 +164,37 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
       await sendMessage(token, chatId, "Nenhuma caça ativa. Use /cacar para criar.");
       return;
     }
-    const linhas = hs.map(
-      (h) =>
-        // `label` é texto do usuário: um produto como "tv <50 polegadas" faz o
-        // Telegram recusar a mensagem inteira ("can't parse entities") — e como
-        // o botão de excluir vive DENTRO desta mensagem, /cacas ficaria travado
-        // para sempre, sem jeito de apagar a caça que o trava.
-        `• <b>${escapeHtml(h.label)}</b> — ${formatBRL(h.priceMinCents)} a ${formatBRL(h.priceMaxCents)}`,
+    // Até 6 consultas ao mercado, uma por caça — sob demanda, fora do `tick`.
+    // Se uma falhar, `null` nos dois campos em vez de derrubar o /cacas
+    // inteiro: o usuário prefere ver 5 caças com dado e uma sem, a não ver nada.
+    const itens: CacaResumo[] = await Promise.all(
+      hs.map(async (h) => {
+        let melhorAtualCents: number | null = null;
+        let medianaCents: number | null = null;
+        try {
+          const r = await buscar(db, h.query, { limite: 1 });
+          melhorAtualCents = r.melhores[0]?.priceCents ?? null;
+          medianaCents = r.stats?.medianCents ?? null;
+        } catch {
+          // mantém null nos dois campos — ver comentário acima.
+        }
+        return {
+          label: h.label,
+          priceMinCents: h.priceMinCents,
+          priceMaxCents: h.priceMaxCents,
+          melhorAtualCents,
+          medianaCents,
+        };
+      }),
     );
-    await sendMessage(token, chatId, linhas.join("\n"), {
+    await sendMessage(token, chatId, formatCacas(itens), {
       keyboard: {
         inline_keyboard: hs.map((h) => [
+          // `label` é texto do usuário: um produto como "tv <50 polegadas" faz o
+          // Telegram recusar a mensagem inteira ("can't parse entities") — e como
+          // o botão de excluir vive DENTRO desta mensagem, /cacas ficaria travado
+          // para sempre, sem jeito de apagar a caça que o trava. O texto do
+          // botão fica cru de propósito (não é parseado como HTML).
           { text: `Excluir ${h.label}`, callback_data: `del:${h.id}` },
         ]),
       },

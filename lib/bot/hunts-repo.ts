@@ -53,6 +53,7 @@ export async function listarHunts(
   Array<{
     id: string;
     label: string;
+    query: string;
     priceMinCents: number;
     priceMaxCents: number;
     isActive: boolean;
@@ -60,13 +61,14 @@ export async function listarHunts(
 > {
   const { data, error } = await db
     .from("hunts")
-    .select("id,label,price_min_cents,price_max_cents,is_active")
+    .select("id,label,query,price_min_cents,price_max_cents,is_active")
     .eq("chat_id", chatId)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`Listando caças de ${chatId}: ${error.message}`);
   return (data ?? []).map((h) => ({
     id: h.id as string,
     label: h.label as string,
+    query: h.query as string,
     priceMinCents: h.price_min_cents as number,
     priceMaxCents: h.price_max_cents as number,
     isActive: h.is_active as boolean,

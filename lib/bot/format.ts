@@ -88,6 +88,38 @@ export function formatSearchPagina(
   };
 }
 
+export type CacaResumo = {
+  label: string;
+  priceMinCents: number;
+  priceMaxCents: number;
+  melhorAtualCents: number | null;
+  medianaCents: number | null;
+};
+
+export function formatCacas(itens: CacaResumo[]): string {
+  const blocos = itens.map((c) => {
+    const linhas = [
+      `🎯 <b>${escapeHtml(c.label)}</b>`,
+      `   sua faixa: ${formatBRL(c.priceMinCents)} a ${formatBRL(c.priceMaxCents)}`,
+    ];
+    if (c.melhorAtualCents === null) {
+      linhas.push("   <i>nenhuma oferta encontrada ainda</i>");
+    } else if (c.melhorAtualCents <= c.priceMaxCents) {
+      linhas.push(`   melhor agora: ${formatBRL(c.melhorAtualCents)} — <b>dentro da faixa</b>`);
+    } else {
+      const acima = Math.round((c.melhorAtualCents / c.priceMaxCents - 1) * 100);
+      linhas.push(
+        `   melhor agora: ${formatBRL(c.melhorAtualCents)} — ${acima}% acima do seu teto`,
+      );
+    }
+    if (c.medianaCents !== null) {
+      linhas.push(`   mediana ${MESES_PADRAO} meses: ${formatBRL(c.medianaCents)}`);
+    }
+    return linhas.join("\n");
+  });
+  return blocos.join("\n\n");
+}
+
 export function formatAjuda(): string {
   return [
     "🎯 <b>Caçador de Ofertas</b>",

@@ -287,11 +287,24 @@ export function formatCacas(itens: CacaResumo[]): string {
   return `${blocos.join("\n\n")}\n\n${RODAPE_CACAS}`;
 }
 
+/**
+ * Quantos canais o coletor lê, só pra mensagem de ajuda.
+ *
+ * É número escrito à mão de propósito: contar de verdade exigiria uma
+ * consulta ao banco dentro do `/ajuda`, que hoje não toca em banco nenhum e
+ * responde instantâneo. O custo de errar é uma frase desatualizada; o custo
+ * de consultar é uma ida ao banco a cada `/ajuda`.
+ *
+ * ATUALIZE ao cadastrar ou desativar canal. Ficou em 13 por dois dias depois
+ * de o catálogo ir a 16, e ninguém percebeu.
+ */
+const CANAIS_MONITORADOS = 25;
+
 export function formatAjuda(): string {
   return [
     "🎯 <b>Caçador de Ofertas</b>",
     "",
-    `Leio 13 canais de promoção do Telegram sem parar e guardo tudo num arquivo dos últimos ${MESES_PADRAO} meses.`,
+    `Leio ${CANAIS_MONITORADOS} canais de promoção do Telegram sem parar e guardo tudo num arquivo dos últimos ${MESES_PADRAO} meses.`,
     "Serve pra <b>qualquer produto</b> — não só celular. Eletro, cozinha, móveis, roupa, academia, importado da China.",
     "",
     "<b>━━━ Ver preço agora ━━━</b>",

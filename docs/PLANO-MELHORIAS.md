@@ -1,6 +1,6 @@
 # Plano de melhorias
 
-Atualizado em 2026-08-11, com o sistema em produção: 13 canais coletando,
+Atualizado em 2026-08-12, com o sistema em produção: 25 canais coletando,
 ~20 mil posts em janela de 3 meses, bot respondendo, 6 caças ativas, 233 testes.
 
 Cada item traz o **problema com evidência medida** (não suposta), a abordagem,

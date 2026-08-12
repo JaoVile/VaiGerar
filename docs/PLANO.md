@@ -104,6 +104,14 @@ entrega com `sent_at` separado de `created_at` (reenvia se falhar), e o resumo
 diário agrupando por produto e loja — "apareceu em quantos lugares hoje e onde
 saiu mais barato".
 
+## Melhorias planejadas
+
+Seis itens levantados em 2026-08-11, com o sistema já em produção, estão em
+**`docs/PLANO-MELHORIAS.md`** — ranqueamento por mediana, alerta com contexto,
+paginação do `/agora`, tendência de preço, segundo bot e resumo diário. Cada um
+com o problema medido em dado real, a abordagem, e as decisões a tomar antes de
+escrever código.
+
 ## Vigiar enquanto engorda
 
 - **Capacidade.** ~1,4 KB por post; o free tier do Supabase (500 MB) comporta

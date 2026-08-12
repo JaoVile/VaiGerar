@@ -33,6 +33,21 @@ const JANELA_POSTS = 500;
  */
 const JANELA_HORAS = 48;
 /**
+ * Folga, em ids, com que a marca d'água volta atrás a cada tick.
+ *
+ * `posts.id` é `bigserial`: o número é reservado na hora do insert, mas a
+ * linha só fica visível no commit. Duas transações concorrentes podem então
+ * commitar fora de ordem, e uma marca d'água colada no maior id visto pularia
+ * a linha atrasada — alerta perdido em silêncio, o pior modo de falha aqui.
+ *
+ * Reler as últimas 100 linhas cobre a folga com sobra (no ritmo de 12/08,
+ * ~500 posts/dia, são ~5 horas de margem) e não custa nada em duplicata: o
+ * `unique(hunt_id, post_row_id)` já garante que reprocessar não dispara duas
+ * vezes. O único custo é egress, e 100 linhas são ~19 KB contra os 378 KB da
+ * janela inteira.
+ */
+const MARGEM_IDS = 100;
+/**
  * Quantos alertas pendentes o tick tenta entregar. Baixo de propósito: cada
  * item é claim + 2 selects + `sendMessage` (timeout 15s) + 2 updates — 5
  * concorrentes mantêm o pior caso dentro do `maxDuration` de 60s da rota,
@@ -238,6 +253,17 @@ export async function processarAlertas(
   if (huntErr) throw new Error(`Lendo caças: ${huntErr.message}`);
   const hunts = (huntRows ?? []).map(toHunt);
 
+  // A marca d'água fica fora do tipo `Hunt` de propósito: ela é detalhe de
+  // varredura, não critério de casamento, e `Hunt` é o contrato que
+  // `lib/hunts/match.ts` e dezenas de testes constroem à mão.
+  //
+  // `?? 0` também é a degradação graciosa: se o deploy subir antes da
+  // migration 0005, a coluna não existe, a marca vira 0 e o tick varre a
+  // janela inteira — exatamente o comportamento antigo, sem quebrar.
+  const marcas = (huntRows ?? []).map((r) => Number(r.last_post_row_id ?? 0));
+  const menorMarca = marcas.length > 0 ? Math.min(...marcas) : 0;
+  const desdeId = Math.max(0, menorMarca - MARGEM_IDS);
+
   let casados = 0;
   if (hunts.length > 0) {
     const desdeIso = new Date(agora.getTime() - JANELA_HORAS * 60 * 60 * 1000).toISOString();
@@ -246,6 +272,7 @@ export async function processarAlertas(
       .select("id,text,price_cents,store,url,posted_at")
       .not("price_cents", "is", null)
       .gte("posted_at", desdeIso)
+      .gt("id", desdeId)
       .order("id", { ascending: false })
       .limit(JANELA_POSTS);
     if (postErr) throw new Error(`Lendo posts para alerta: ${postErr.message}`);
@@ -273,6 +300,33 @@ export async function processarAlertas(
         .select("id");
       if (error) throw new Error(`Gravando alertas: ${error.message}`);
       casados = (inseridos ?? []).length;
+    }
+
+    // Avança a marca d'água só até o maior id que este tick de fato examinou.
+    //
+    // Restrito às caças lidas no início: uma caça criada durante o tick tem
+    // marca 0 e ainda não varreu nada — bumpar a marca dela aqui a faria
+    // nascer cega para a janela de 48h, que é justamente o que o usuário
+    // espera ver quando cria uma caça.
+    //
+    // `lt` garante idempotência: dois ticks concorrentes não puxam a marca
+    // para trás. Falha aqui é registrada e não interrompe nada — a marca é
+    // otimização de egress; perdê-la custa uma varredura a mais, enquanto
+    // deixar a exceção subir custaria a entrega dos alertas já casados. É
+    // também o que segura o deploy feito antes da migration 0005.
+    const maiorIdVisto = (postRows ?? []).reduce((max, p) => Math.max(max, p.id as number), 0);
+    if (maiorIdVisto > 0) {
+      const { error: marcaErr } = await db
+        .from("hunts")
+        .update({ last_post_row_id: maiorIdVisto })
+        .in(
+          "id",
+          hunts.map((h) => h.id),
+        )
+        .lt("last_post_row_id", maiorIdVisto);
+      if (marcaErr) {
+        console.error("Falha ao avançar a marca d'água das caças:", marcaErr.message);
+      }
     }
   }
 

@@ -155,11 +155,12 @@ function cenario(
     claim?: Record<string, unknown>[];
     pendentes?: Record<string, unknown>[];
     inseridos?: Record<string, unknown>[];
+    hunts?: Record<string, unknown>[];
   } = {},
 ) {
   return createQueryFake({
     select: {
-      hunts: [huntRow],
+      hunts: over.hunts ?? [huntRow],
       posts: [postRow],
       alerts: over.pendentes ?? [pendente],
     },
@@ -264,11 +265,67 @@ describe("processarAlertas — claim com lease", () => {
     expect(updatesAlerts[1].patch).toEqual({ sent_at: AGORA.toISOString() });
     expect(argsDe(updatesAlerts[1], "eq")).toEqual(["id", 55]);
 
+    // Dois updates em `hunts` por tick: a marca d'água da varredura e o
+    // `last_alert_at` da entrega. Asserção por conteúdo, não por posição —
+    // contar updates fazia este teste quebrar quando a marca d'água entrou.
     const updateHunts = db.de("update", "hunts");
-    expect(updateHunts).toHaveLength(1);
-    expect(updateHunts[0].patch).toEqual({
+    const marcados = updateHunts.filter((u) => "last_alert_at" in u.patch);
+    expect(marcados).toHaveLength(1);
+    expect(marcados[0].patch).toEqual({
       last_alert_at: AGORA.toISOString(),
     });
+  });
+
+  // Egress medido em 12/08: a consulta de casamento relia a janela de 48h
+  // inteira a cada tick — 378 KB x 288 ticks/dia = 3,11 GB/mês, 62% do limite
+  // de 5 GB/mês do free tier, antes de coleta, backfill e buscas.
+  it("lê só o que entrou depois da marca d'água, com a margem de segurança", async () => {
+    const db = cenario({
+      hunts: [{ ...huntRow, last_post_row_id: 5000 }],
+    });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const selectPosts = db.de("select", "posts")[0];
+    // 5000 - MARGEM_IDS (100)
+    expect(argsDe(selectPosts, "gt")).toEqual(["id", 4900]);
+  });
+
+  it("caça nova (marca 0) varre a janela inteira — não nasce cega", async () => {
+    // Quem cria uma caça quer saber da oferta que já está de pé, não só das
+    // futuras. Uma caça com marca 0 puxa a varredura inteira de volta, mesmo
+    // que as outras caças já estejam adiantadas.
+    const db = cenario({
+      hunts: [
+        { ...huntRow, id: "antiga", last_post_row_id: 90000 },
+        { ...huntRow, id: "nova", last_post_row_id: 0 },
+      ],
+    });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    expect(argsDe(db.de("select", "posts")[0], "gt")).toEqual(["id", 0]);
+  });
+
+  it("avança a marca até o maior id examinado, só nas caças já lidas", async () => {
+    const db = cenario();
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const marca = db.de("update", "hunts").filter((u) => "last_post_row_id" in u.patch);
+    expect(marca).toHaveLength(1);
+    expect(marca[0].patch).toEqual({ last_post_row_id: 10 });
+    // Restrito às caças lidas no início do tick: caça criada no meio do tick
+    // tem marca 0 e ainda não varreu nada — bumpar a dela a faria nascer cega.
+    expect(argsDe(marca[0], "in")).toEqual(["id", ["h1"]]);
+    // `lt` impede que dois ticks concorrentes puxem a marca pra trás.
+    expect(argsDe(marca[0], "lt")).toEqual(["last_post_row_id", 10]);
+  });
+
+  it("coluna ausente (deploy antes da migration 0005) varre tudo em vez de quebrar", async () => {
+    const semColuna = { ...huntRow };
+    const db = cenario({ hunts: [semColuna] });
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(argsDe(db.de("select", "posts")[0], "gt")).toEqual(["id", 0]);
+    expect(r.enviados).toBe(1);
   });
 
   it("falha comum de envio mantém o attempts incrementado (queima tentativa)", async () => {

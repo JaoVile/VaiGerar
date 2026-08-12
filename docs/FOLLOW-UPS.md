@@ -198,3 +198,19 @@ Estes cinco ficaram, com o porquê.
   não muda nada.
 - `STRIKE_RE` não trata `<s>` aninhado na mesma tag. Verificado: o resultado é
   idêntico ao caso simples, não vaza preço riscado.
+
+## Título de post: os últimos 4,3%
+
+`tituloDoPost` escolhe rodapé do canal em vez do nome do produto em **4,3%**
+dos posts (medido em 12/08 sobre 8.000 posts, avaliando numa metade a lista
+derivada da outra). Veio de 16,2%.
+
+O que fecharia a diferença, medido: uma tabela de linhas que se repetem 5+
+vezes no arquivo, alimentada por cron, derruba pra **2,5%**. Nome de produto é
+praticamente único; rodapé se repete centenas de vezes — a frequência é o
+detector, e `REGEX_BOILERPLATE` é só o resultado dela congelado em código.
+
+**Ficou de fora por 1,8 ponto percentual** contra uma tabela nova, um job novo
+e uma dependência de escrita no caminho da busca. Reavaliar se a taxa subir —
+ela sobe sozinha quando entra canal novo com rodapé que a regex não conhece.
+

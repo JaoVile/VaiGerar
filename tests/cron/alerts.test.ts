@@ -29,10 +29,28 @@ const post = {
   priceCents: 289900,
   store: "amazon",
   url: "https://t.me/x/1",
+  productUrl: "https://amzn.to/abc",
   postedAt: "2026-08-10T15:00:00Z",
 };
 
 describe("formatAlerta", () => {
+  // A reclamação que originou o item 0 ("apareceu o preço mas sem informação
+  // de onde eu encontraria") valia igual pro alerta: ele mandava só o link do
+  // post do Telegram. Em canal que encurta pelo domínio próprio
+  // (`ctofertascelulares`, 100% dos posts) são dois saltos até o produto.
+  it("inclui o link direto da oferta, além do link do post", () => {
+    const s = formatAlerta(hunt, post, null);
+    expect(s).toContain("https://amzn.to/abc");
+    expect(s).toContain("ir para a oferta");
+    expect(s).toContain("https://t.me/x/1");
+  });
+
+  it("post sem product_url não mostra linha de oferta quebrada", () => {
+    const s = formatAlerta(hunt, { ...post, productUrl: null }, null);
+    expect(s).not.toContain("ir para a oferta");
+    expect(s).toContain("https://t.me/x/1");
+  });
+
   it("mostra o rótulo da caça e o preço", () => {
     const s = formatAlerta(hunt, post, null);
     expect(s).toContain("Galaxy S25+");

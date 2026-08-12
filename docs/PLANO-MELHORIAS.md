@@ -10,8 +10,8 @@ e as decisões a tomar antes de escrever código.
 
 | # | item | tipo | por que nessa posição |
 |---|---|---|---|
-| **0** | **Título e link do resultado** | **defeito** | está no ar e atrapalha todo uso |
-| 1 | Provar o alerta em produção | verificação | o propósito do sistema nunca aconteceu |
+| ~~0~~ | ~~Título e link do resultado~~ | defeito | **feito em 11/08 e corrigido de novo em 12/08** |
+| ~~1~~ | ~~Provar o alerta em produção~~ | verificação | **feito em 12/08 — ver abaixo** |
 | 2 | Guarda de prazo inerte | dívida | risco real de alerta duplicado |
 | 3 | Casamento semântico | qualidade | teto de precisão atual |
 | 4 | Tendência de preço | capacidade nova | dado já pago |
@@ -73,7 +73,34 @@ saltos até o produto.
 a mesma lógica de primeira linha) — corrigir nos dois lugares, ou extrair a
 função para um único ponto.
 
-## 1. Provar o alerta em produção
+## 1. Provar o alerta em produção — CONCLUÍDO em 2026-08-12
+
+**Resultado.** Caça descartável (`air fryer`, R$150–600, 2 posts casando na
+janela de 48h). O tick disparou `casados=1 enviados=1 falhos=0` e a mensagem
+chegou. Dois ticks seguintes: `enviados=0`. A tabela `alerts` ficou com uma
+linha só, `attempts=1`. Caça e alerta apagados depois.
+
+**O que isso provou de verdade:** `casa()` contra post real, o claim atômico
+com `claimed_at`, a entrega, o formato da mensagem, e o `unique(hunt_id,
+post_row_id)` impedindo repetição — este último era a metade que só a
+realidade provava.
+
+**O que isso encontrou** (o motivo de o item existir): o alerta chegou com
+`_*Promoção sujeita a alteração a qualquer momento_` como título. O item 0,
+entregue no dia anterior, escolhia a linha mais longa do post — e a linha mais
+longa costuma ser o aviso legal. Medido depois em 8.000 posts: **16,2% dos
+títulos eram rodapé**, quase a mesma taxa do defeito de emoji que o item 0
+tinha ido corrigir. Corrigido junto (ver seção 0). O alerta também não trazia
+o `product_url`; agora traz.
+
+**Lição pro próximo item:** a medição de 11/08 classificava título ruim como
+"emoji, vazio ou frase genérica". Aviso legal não caía em nenhuma das três, e
+por isso a taxa deu 0%. Métrica que não enxerga o defeito dá aprovação falsa —
+o teste em produção enxergou em uma mensagem.
+
+---
+
+## 1-bis. Situação original (mantida para histórico)
 
 **Situação:** nenhuma caça disparou desde que o sistema entrou no ar. Matching,
 claim atômico, lease, entrega e formato de mensagem foram verificados por

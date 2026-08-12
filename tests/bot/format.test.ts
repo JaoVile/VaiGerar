@@ -46,6 +46,84 @@ describe("tituloDoPost", () => {
     expect(() => tituloDoPost("")).not.toThrow();
   });
 
+  // Regressão descoberta em 12/08 ao provar o alerta em produção (item 1 do
+  // PLANO-MELHORIAS): o alerta chegou com "_*Promoção sujeita a alteração a
+  // qualquer momento_" como título. É o rodapé de aviso do canal
+  // `ofertasrelampago`, e ele venceu o nome do produto por 3 caracteres
+  // (41 alfanuméricos contra 38).
+  //
+  // Medido sobre 8.000 posts reais, avaliando numa metade a lista derivada da
+  // outra (evita o número circular de filtrar e medir com a mesma lista):
+  //
+  //   critério                                    título boilerplate
+  //   linha mais longa sem URL (o que estava no ar)         16,2%
+  //   só linhas antes do link de compra                      9,7%
+  //   antes do link + padrão de texto                        4,3%
+  //
+  // Ou seja: matar o emoji não bastou. A linha mais longa do post costuma ser
+  // o aviso legal, não o produto.
+  it("aviso legal mais longo que o nome do produto não vira título", () => {
+    const texto = [
+      "🚨GENTEE! 16L 😱🏃🏻‍♀️🏃🏻‍♀️",
+      "Fritadeira Air Fryer Philco 16 Litros Paf16c",
+      "🔥🔥por R$ 386,10",
+      "🎟️Use o cupom: APROVEITAESSA",
+      "👉Link p/ comprar: https://meli.la/2WTDW6M",
+      "_*Promoção sujeita a alteração a qualquer momento_",
+    ].join("\n");
+    expect(tituloDoPost(texto)).toBe("Fritadeira Air Fryer Philco 16 Litros Paf16c");
+  });
+
+  it("linha depois do link de compra não vira título, mesmo sem casar padrão", () => {
+    const texto = [
+      "Monitor AOC 27 polegadas",
+      "https://amzn.to/xyz",
+      "Texto muito comprido de rodapé que o canal repete em todo post e que não descreve produto nenhum",
+    ].join("\n");
+    expect(tituloDoPost(texto)).toBe("Monitor AOC 27 polegadas");
+  });
+
+  it("post que só tem aviso legal antes do link cai no aviso em vez de vazio", () => {
+    const texto = ["⚠️ Preço e estoque sujeitos a alteração.", "https://amzn.to/xyz"].join("\n");
+    expect(tituloDoPost(texto)).toBe("⚠️ Preço e estoque sujeitos a alteração.");
+  });
+
+  // Post real do `nerdofertas` (12/08). Aqui o corte posicional NÃO resolve: a
+  // linha de cupom vem antes do link de compra e é a mais longa do post (53
+  // alfanuméricos contra 50 do nome do produto). Só REGEX_BOILERPLATE decide.
+  //
+  // Detalhe que faz a linha entrar como candidata: "s.shopee.com.br/..." vem
+  // sem "https://", então REGEX_URL não a reconhece como URL.
+  //
+  // Este teste existe porque a primeira versão dos testes desta rodada passava
+  // com a regex desativada — cobria só o corte posicional. É o padrão que já
+  // apareceu 4x nesta base: teste verde sobre código sem prova.
+  it("linha de cupom antes do link não vence o nome do produto", () => {
+    const texto = [
+      "➡️ Placa-Mãe AMD AM4 Asus TUF GAMING B550M-Plus - 90MB14A0-C1BAY0",
+      "✅ R$ 647 😱😱",
+      "🏷 Resgate todos os cupons desta página: s.shopee.com.br/9fK2leJqJZ",
+      "🛒https://s.shopee.com.br/20u01rOneY",
+    ].join("\n");
+    expect(tituloDoPost(texto, 80)).toBe(
+      "➡️ Placa-Mãe AMD AM4 Asus TUF GAMING B550M-Plus - 90MB14A0-C1BAY0",
+    );
+  });
+
+  it("aviso de preço/estoque antes do link não vence o nome do produto", () => {
+    const texto = [
+      "📱 Poco M8 5G 256GB",
+      "⚠️ Preço e estoque sujeitos a alteração a qualquer momento",
+      "https://s.shopee.com.br/abc",
+    ].join("\n");
+    expect(tituloDoPost(texto)).toBe("📱 Poco M8 5G 256GB");
+  });
+
+  it("post sem link nenhum ainda escolhe a linha mais longa", () => {
+    const texto = ["🔥", "Geladeira Brastemp Frost Free 375L"].join("\n");
+    expect(tituloDoPost(texto)).toBe("Geladeira Brastemp Frost Free 375L");
+  });
+
   it("trunca linha longa mantendo o limite de caracteres", () => {
     const texto = "P".repeat(100);
     const titulo = tituloDoPost(texto, 70);

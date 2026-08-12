@@ -16,6 +16,30 @@ function contarAlfanumericos(s: string): number {
 const REGEX_URL = /https?:\/\/\S+/i;
 
 /**
+ * Piso de conteúdo pra uma linha ser considerada nome de produto. Os 12
+ * caracteres alfanuméricos saíram da medição de 11/08, onde já separavam
+ * linha de efeito de linha de produto.
+ */
+const MIN_CONTEUDO = 12;
+
+/**
+ * Rodapé de aviso que os canais repetem em todo post. Não é lista inventada:
+ * saiu da contagem de linhas que se repetem 5+ vezes num corte de 8.000 posts
+ * reais (12/08). As mais frequentes, com a contagem medida:
+ *
+ *   2.126x  ⚠️ Preço e estoque sujeitos a alteração.
+ *     691x  -Consulte disponibilidade para sua região
+ *     521x  👉 Resgate todos os cupons disponíveis aqui:
+ *     449x  O desconto entra apenas na tela de pagamento
+ *
+ * A intuição por trás: nome de produto é praticamente único no arquivo,
+ * rodapé se repete centenas de vezes. A frequência é o detector; estes
+ * padrões são só a forma barata de embutir o resultado dela no código.
+ */
+const REGEX_BOILERPLATE =
+  /(sujeit\w+ a altera|preço e estoque|consulte disponibilidade|resgate (todos )?o?s? ?cupo|o desconto entra|na tela de pagamento|compare os fretes|uso limitado|antes que (expire|acabe)|aproveite antes|tempo limitado|acesse o link e pesquise|ative o cupom|use o cupom antes|desconto extra na compra|promoção (por|sujeita)|valores? sujeit|link p\/ comprar|^-?consulte)/i;
+
+/**
  * Escolhe a linha do post que serve de título do link.
  *
  * Existia como `primeiraLinha` (primeira linha não-vazia do post). Defeito
@@ -48,6 +72,27 @@ const REGEX_URL = /https?:\/\/\S+/i;
  * Se nenhuma linha qualificar (post sem nenhum caractere alfanumérico fora
  * de uma URL — ex.: só emoji), cai no comportamento antigo em vez de
  * devolver vazio.
+ *
+ * SEGUNDA RODADA (12/08) — "linha mais longa" não bastava. Ao provar o alerta
+ * em produção (item 1 do PLANO-MELHORIAS), o alerta chegou com o rodapé
+ * "_*Promoção sujeita a alteração a qualquer momento_" como título: venceu o
+ * nome do produto por 3 caracteres alfanuméricos (41 contra 38).
+ *
+ * A medição de 11/08 não pegou isso porque classificava título ruim como
+ * emoji/vazio/genérico — aviso legal passava por texto legítimo.
+ *
+ * Nova medição, 8.000 posts reais. Para não medir de forma circular (filtrar
+ * e avaliar com a mesma lista), a lista de rodapés foi derivada de uma metade
+ * do arquivo e a taxa avaliada na outra:
+ *
+ *   critério                                          título de rodapé
+ *   linha mais longa sem URL (1ª rodada)                        16,2%
+ *   + só linhas antes do link de compra                          9,7%
+ *   + descarta linha que casa REGEX_BOILERPLATE                  4,3%
+ *   (+ lista de linhas exatas aprendida do arquivo)             (2,5%)
+ *
+ * A última linha exigiria uma tabela de rodapés mantida por cron; ficou de
+ * fora por 1,8 ponto percentual. Está em `docs/FOLLOW-UPS.md`.
  */
 export function tituloDoPost(texto: string, max = 70): string {
   const linhas = texto
@@ -55,15 +100,40 @@ export function tituloDoPost(texto: string, max = 70): string {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
+  const semUrl = linhas.filter((l) => !REGEX_URL.test(l));
+  // Corte estrutural: o que vem depois do link de comprar tende a ser rodapé,
+  // não produto. É o filtro mais barato e sozinho já leva 16,2% a 9,7%.
+  const indiceLink = linhas.findIndex((l) => REGEX_URL.test(l));
+  const antesDoLink = indiceLink === -1 ? semUrl : linhas.slice(0, indiceLink);
+  const temConteudo = (l: string) => contarAlfanumericos(l) >= MIN_CONTEUDO;
+  const semRodape = (ls: string[]) => ls.filter((l) => !REGEX_BOILERPLATE.test(l));
+
+  // Cascata de degradação, mesma ideia da rede de segurança do parser de
+  // preço: cada grupo só vale se tiver linha, senão cai pro próximo. Post que
+  // é *só* aviso legal mostra o aviso legal — nunca vazio, nunca lança.
+  //
+  // "Antes do link" é preferência, não veto. Alguns canais põem a URL antes
+  // do nome do produto; vetar o que vem depois devolvia o emoji de abertura
+  // como título — o defeito de 11/08 de volta. Por isso o segundo grupo relê
+  // o post inteiro em vez de aceitar o que sobrou antes do link.
+  const grupos = [
+    semRodape(antesDoLink).filter(temConteudo),
+    semRodape(semUrl).filter(temConteudo),
+    semRodape(semUrl),
+    semUrl,
+  ];
+
   let melhor: string | null = null;
-  let melhorPontuacao = 0;
-  for (const linha of linhas) {
-    if (REGEX_URL.test(linha)) continue;
-    const pontuacao = contarAlfanumericos(linha);
-    if (pontuacao > melhorPontuacao) {
-      melhorPontuacao = pontuacao;
-      melhor = linha;
+  for (const grupo of grupos) {
+    let melhorPontuacao = 0;
+    for (const linha of grupo) {
+      const pontuacao = contarAlfanumericos(linha);
+      if (pontuacao > melhorPontuacao) {
+        melhorPontuacao = pontuacao;
+        melhor = linha;
+      }
     }
+    if (melhor) break;
   }
 
   const escolhida = melhor ?? linhas[0] ?? texto.trim();

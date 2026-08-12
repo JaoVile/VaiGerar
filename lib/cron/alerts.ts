@@ -11,6 +11,8 @@ export type AlertPost = {
   priceCents: number;
   store: string | null;
   url: string;
+  /** Link direto da oferta. Nem todo post tem — canal só de cupom, por exemplo. */
+  productUrl: string | null;
   postedAt: string;
 };
 
@@ -120,11 +122,20 @@ export function formatAlerta(hunt: Hunt, post: AlertPost, stats: PriceStats | nu
     );
   }
 
-  linhas.push(
-    `postado em ${escapeHtml(quando)}`,
-    `${escapeHtml(titulo)}`,
-    `<a href="${escapeHtml(post.url)}">ver post</a>`,
-  );
+  linhas.push(`postado em ${escapeHtml(quando)}`, `${escapeHtml(titulo)}`);
+
+  // Dois links, mesma decisão de `formatSearch`: o post dá contexto (cupom no
+  // texto, comentários) e o `product_url` vai direto pra oferta. Sem o
+  // segundo, canal que encurta pelo domínio próprio obriga a dois cliques —
+  // era metade da reclamação que originou esta rodada.
+  //
+  // "ir para a oferta", nunca "ir para a loja": em canais como o
+  // `ctofertascelulares` o `product_url` é encurtador do próprio canal, então
+  // não dá pra prometer que o destino é a loja.
+  if (post.productUrl) {
+    linhas.push(`<a href="${escapeHtml(post.productUrl)}">ir para a oferta</a>`);
+  }
+  linhas.push(`<a href="${escapeHtml(post.url)}">ver post</a>`);
   return linhas.join("\n");
 }
 
@@ -371,7 +382,7 @@ async function processarUmAlerta(
     const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
     const { data: pRow } = await db
       .from("posts")
-      .select("id,text,price_cents,store,url,posted_at")
+      .select("id,text,price_cents,store,url,product_url,posted_at")
       .eq("id", a.post_row_id)
       .single();
     if (!hRow || !pRow) throw new Error("caça ou post sumiu");
@@ -386,6 +397,7 @@ async function processarUmAlerta(
         priceCents: pRow.price_cents as number,
         store: pRow.store as string | null,
         url: pRow.url as string,
+        productUrl: (pRow.product_url as string | null) ?? null,
         postedAt: pRow.posted_at as string,
       },
       stats,

@@ -218,6 +218,7 @@ describe("tratar /cacas", () => {
             store: "amazon",
             postedAt: "2026-08-01T12:00:00Z",
             url: "https://t.me/x/1",
+            productUrl: null,
           },
         ],
       });
@@ -260,6 +261,7 @@ describe("tratar /cacas", () => {
               store: "amazon",
               postedAt: "2026-08-01T12:00:00Z",
               url: "https://t.me/x/2",
+              productUrl: null,
             },
           ],
         });
@@ -320,6 +322,7 @@ function buscarFake(
     store: "amazon",
     postedAt: "2026-08-01T12:00:00Z",
     url: `https://t.me/x/${i}`,
+    productUrl: null,
   }));
   return Promise.resolve({
     termo,
@@ -420,8 +423,11 @@ function sessaoDeBusca(termo: string): Record<string, unknown> {
 }
 
 function callbacksDe(opts: unknown): string[] {
-  const kb = (opts as { keyboard?: { inline_keyboard: Array<Array<{ callback_data: string }>> } })
-    ?.keyboard;
+  const kb = (
+    opts as {
+      keyboard?: { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    }
+  )?.keyboard;
   return (kb?.inline_keyboard.flat() ?? []).map((b) => b.callback_data);
 }
 

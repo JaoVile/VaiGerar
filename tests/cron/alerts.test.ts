@@ -60,6 +60,19 @@ describe("formatAlerta", () => {
     // teto 315000, preço 289900 → 8% abaixo
     expect(formatAlerta(hunt, post, null)).toMatch(/8%/);
   });
+
+  // Mesmo defeito de `formatSearch`: o post abre com uma linha só de emoji e
+  // `formatAlerta` usava a mesma lógica de "primeira linha não-vazia" —
+  // agora extraída para `tituloDoPost` em `lib/bot/format.ts`.
+  it("post abre com linha de emoji: o título do alerta é o nome do produto, não o emoji", () => {
+    const s = formatAlerta(
+      hunt,
+      { ...post, text: "🚨🚨\nGalaxy S25+ 256GB por R$ 2.899,00" },
+      null,
+    );
+    expect(s).toContain("Galaxy S25+ 256GB por R$ 2.899,00");
+    expect(s).not.toContain("🚨🚨");
+  });
 });
 
 describe("formatAlerta com contexto de mercado", () => {

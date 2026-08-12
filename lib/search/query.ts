@@ -7,6 +7,7 @@ export type SearchHit = {
   store: string | null;
   postedAt: string;
   url: string;
+  productUrl: string | null;
 };
 
 export type SearchResult = {
@@ -52,7 +53,7 @@ export async function buscar(
   // abaixo, sobre essas mesmas linhas.
   const { data, error } = await db
     .from("posts")
-    .select("text,price_cents,store,posted_at,url")
+    .select("text,price_cents,store,posted_at,url,product_url")
     .textSearch("search_vector", termo, { type: "plain", config: "portuguese" })
     .not("price_cents", "is", null)
     .gte("posted_at", desde.toISOString())
@@ -66,6 +67,7 @@ export async function buscar(
     store: string | null;
     posted_at: string;
     url: string;
+    product_url: string | null;
   }>;
 
   // Só "melhores" depende da ordem; a estatística e o piso usam o conjunto,
@@ -79,6 +81,7 @@ export async function buscar(
       store: l.store,
       postedAt: l.posted_at,
       url: l.url,
+      productUrl: l.product_url,
     }))
     .sort((a, b) => a.priceCents - b.priceCents);
 

@@ -5,9 +5,54 @@ import {
   formatCacas,
   formatSearch,
   formatSearchPagina,
+  tituloDoPost,
 } from "@/lib/bot/format";
 import { MESES_PADRAO } from "@/lib/search/query";
 import { escapeHtml } from "@/lib/telegram";
+
+describe("tituloDoPost", () => {
+  // Formato real dos canais: abrem o post com uma linha só de emoji
+  // (🚨🚨, 😱😱, 🔥🔥) e o nome do produto vem só umas linhas depois.
+  // Medido contra 2.400 posts reais em 2026-08-11: "primeira linha
+  // não-vazia" dava título ruim em 19,3% dos casos; "linha mais longa sem
+  // URL" zera essa taxa.
+  it("post abre com linha de emoji: pega o nome do produto, não o emoji", () => {
+    const texto = "🚨🚨\n\nSamsung Galaxy S25 Plus 256GB 12GB RAM 5G";
+    expect(tituloDoPost(texto)).toBe("Samsung Galaxy S25 Plus 256GB 12GB RAM 5G");
+  });
+
+  it("nome do produto na terceira linha, não na primeira nem na segunda", () => {
+    const texto = ["😱😱", "Corre que acaba rápido!!", "Air Fryer Mondial 5L Inox 220V"].join("\n");
+    expect(tituloDoPost(texto)).toBe("Air Fryer Mondial 5L Inox 220V");
+  });
+
+  it("linha longa com URL não vira título — a URL some do resultado", () => {
+    const texto = [
+      "🔥🔥",
+      "https://www.amazon.com.br/produto-incrivel-com-nome-longo-no-link/dp/B0ABCDEFGH",
+      "TV Samsung 50 polegadas",
+    ].join("\n");
+    const titulo = tituloDoPost(texto);
+    expect(titulo).toBe("TV Samsung 50 polegadas");
+    expect(titulo).not.toContain("http");
+  });
+
+  it("post sem nenhuma linha útil (só emoji) cai no comportamento antigo em vez de vazio", () => {
+    const texto = "🚨🚨\n😱😱\n🔥🔥";
+    expect(tituloDoPost(texto)).toBe("🚨🚨");
+  });
+
+  it("post sem texto nenhum não lança e não devolve vazio às cegas", () => {
+    expect(() => tituloDoPost("")).not.toThrow();
+  });
+
+  it("trunca linha longa mantendo o limite de caracteres", () => {
+    const texto = "P".repeat(100);
+    const titulo = tituloDoPost(texto, 70);
+    expect(titulo.length).toBe(71); // 70 + "…"
+    expect(titulo.endsWith("…")).toBe(true);
+  });
+});
 
 describe("escapeHtml", () => {
   it("escapa os três caracteres que quebram o HTML do Telegram", () => {
@@ -35,6 +80,7 @@ describe("formatSearch", () => {
         store: "amazon",
         postedAt: "2026-08-01T12:00:00Z",
         url: "https://t.me/x/1",
+        productUrl: null,
       },
     ],
   };
@@ -59,6 +105,46 @@ describe("formatSearch", () => {
     const s = formatSearch({ termo: "xyzabc", stats: null, melhores: [] });
     expect(s.toLowerCase()).toContain("não achei");
     expect(s).toContain("xyzabc");
+  });
+
+  // Item 0 do plano: sem `product_url` o único link era o do post do
+  // Telegram — o usuário clicava, caía no post, e precisava clicar de novo
+  // pra chegar na loja. Quando o coletor preencheu `product_url`, ele passa
+  // a aparecer como um segundo link.
+  it("sem product_url, mostra só o link do post", () => {
+    const s = formatSearch(base);
+    expect(s).toContain('<a href="https://t.me/x/1">');
+    expect(s).not.toContain("ir para a oferta");
+  });
+
+  it("com product_url, mostra os dois links", () => {
+    const s = formatSearch({
+      ...base,
+      melhores: [{ ...base.melhores[0], productUrl: "https://loja.exemplo/produto" }],
+    });
+    expect(s).toContain('<a href="https://t.me/x/1">');
+    expect(s).toContain('<a href="https://loja.exemplo/produto">ir para a oferta</a>');
+  });
+
+  // `product_url` em canais como o `ctofertascelulares` é um encurtador do
+  // próprio canal (`canalte.ch`), não a loja de verdade — não dá pra
+  // prometer "loja" no rótulo.
+  it("não promete 'loja' no rótulo do link de product_url — é 'oferta', neutro", () => {
+    const s = formatSearch({
+      ...base,
+      melhores: [{ ...base.melhores[0], productUrl: "https://canalte.ch/xyz" }],
+    });
+    expect(s.toLowerCase()).not.toContain("ir para a loja");
+    expect(s).toContain("ir para a oferta");
+  });
+
+  it("escapa HTML do product_url dentro do href", () => {
+    const s = formatSearch({
+      ...base,
+      melhores: [{ ...base.melhores[0], productUrl: "https://loja.exemplo/x?a=1&b=2" }],
+    });
+    expect(s).toContain("https://loja.exemplo/x?a=1&amp;b=2");
+    expect(s).not.toContain("x?a=1&b=2");
   });
 });
 
@@ -94,6 +180,7 @@ describe("formatSearchPagina", () => {
     store: "amazon",
     postedAt: "2026-08-01T12:00:00Z",
     url: `https://t.me/x/${p}`,
+    productUrl: null,
   });
   const r = {
     termo: "air fryer",

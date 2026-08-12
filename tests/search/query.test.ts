@@ -25,6 +25,7 @@ const linha = (priceCents: number, over = {}) => ({
   store: "amazon",
   posted_at: "2026-08-01T12:00:00Z",
   url: "https://t.me/x/1",
+  product_url: null,
   ...over,
 });
 
@@ -112,5 +113,19 @@ describe("buscar", () => {
     const db = fakeDb([linha(900), linha(1000), linha(1100)]);
     const r = await buscar(db, "galaxy s25");
     expect(r.stats?.count).toBe(3);
+  });
+
+  // Item 0 do plano: `product_url` existe desde a primeira migration, é
+  // preenchido pelo coletor, mas nunca tinha sido lido nem exibido.
+  it("pede product_url ao banco e devolve como productUrl nas melhores", async () => {
+    const db = fakeDb([linha(100, { product_url: "https://loja.exemplo/x" })]);
+    const r = await buscar(db, "air fryer");
+    expect(r.melhores[0]?.productUrl).toBe("https://loja.exemplo/x");
+  });
+
+  it("productUrl vem null quando o post não tem product_url", async () => {
+    const db = fakeDb([linha(100)]);
+    const r = await buscar(db, "air fryer");
+    expect(r.melhores[0]?.productUrl).toBeNull();
   });
 });

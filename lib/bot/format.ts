@@ -8,10 +8,66 @@ export function formatBRL(cents: number): string {
   })}`;
 }
 
-function primeiraLinha(texto: string, max = 70): string {
-  const limpo = texto.split("\n").find((l) => l.trim().length > 0) ?? texto;
-  const t = limpo.trim();
-  return t.length > max ? `${t.slice(0, max)}…` : t;
+/** Conta caracteres alfanuméricos (letra ou dígito Unicode) de uma string. */
+function contarAlfanumericos(s: string): number {
+  return (s.match(/[\p{L}\p{N}]/gu) ?? []).length;
+}
+
+const REGEX_URL = /https?:\/\/\S+/i;
+
+/**
+ * Escolhe a linha do post que serve de título do link.
+ *
+ * Existia como `primeiraLinha` (primeira linha não-vazia do post). Defeito
+ * medido em produção: buscando "samsung s25 plus", 44 de 53 resultados (83%)
+ * mostravam um emoji (`🚨🚨`, `😱😱`, `🔥🔥`) como texto clicável — vários
+ * canais abrem todo post com uma linha só de emoji.
+ *
+ * Medição contra 2.400 posts reais do arquivo, em 2026-08-11, taxa de título
+ * ruim (emoji/vazio/frase genérica em vez do nome do produto):
+ *
+ *   critério                                                 títulos ruins
+ *   primeira linha não-vazia (comportamento antigo)                19,3%
+ *   primeira linha com 12+ caracteres alfanuméricos                  0%
+ *   linha mais longa sem URL (por caracteres alfanuméricos)          0%
+ *
+ * Os dois últimos critérios zeram a métrica, mas só "linha mais longa"
+ * escolhe o nome do produto — "12+ caracteres" costuma parar na primeira
+ * frase de efeito do post ("Ative o cupom na página do produto!") em vez do
+ * nome ("Samsung Galaxy S26 5G, 256 GB, 12 GB RAM | ATIVE O CUPOM + PIX").
+ *
+ * NÃO troque isso de volta por "primeira linha" sem repetir a medição —
+ * é exatamente essa simplificação que reintroduz o defeito.
+ *
+ * "Mais longa" é contado em caracteres alfanuméricos, não em `.length` cru:
+ * `.length` cru deixaria uma linha de puras emoji (que pesa vários code
+ * units por causa de surrogate pairs / ZWJ) vencer uma linha de texto real
+ * mais curta.
+ *
+ * Linha com URL é descartada inteira (não só a URL) — não vira título.
+ * Se nenhuma linha qualificar (post sem nenhum caractere alfanumérico fora
+ * de uma URL — ex.: só emoji), cai no comportamento antigo em vez de
+ * devolver vazio.
+ */
+export function tituloDoPost(texto: string, max = 70): string {
+  const linhas = texto
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  let melhor: string | null = null;
+  let melhorPontuacao = 0;
+  for (const linha of linhas) {
+    if (REGEX_URL.test(linha)) continue;
+    const pontuacao = contarAlfanumericos(linha);
+    if (pontuacao > melhorPontuacao) {
+      melhorPontuacao = pontuacao;
+      melhor = linha;
+    }
+  }
+
+  const escolhida = melhor ?? linhas[0] ?? texto.trim();
+  return escolhida.length > max ? `${escolhida.slice(0, max)}…` : escolhida;
 }
 
 export function formatSearch(r: SearchResult): string {
@@ -29,9 +85,15 @@ export function formatSearch(r: SearchResult): string {
     const loja = m.store ? ` · ${escapeHtml(m.store)}` : "";
     linhas.push(
       `<b>${formatBRL(m.priceCents)}</b>${loja} · ${m.postedAt.slice(0, 10)}`,
-      `<a href="${escapeHtml(m.url)}">${escapeHtml(primeiraLinha(m.text))}</a>`,
-      "",
+      `<a href="${escapeHtml(m.url)}">${escapeHtml(tituloDoPost(m.text))}</a>`,
     );
+    // `product_url` nem sempre leva direto à loja — em canais como o
+    // `ctofertascelulares` é um encurtador do próprio canal. Por isso "ir
+    // para a oferta", nunca "ir para a loja": não dá pra prometer o destino.
+    if (m.productUrl) {
+      linhas.push(`<a href="${escapeHtml(m.productUrl)}">ir para a oferta</a>`);
+    }
+    linhas.push("");
   }
 
   linhas.push(
@@ -63,9 +125,12 @@ export function formatSearchPagina(
     const loja = m.store ? ` · ${escapeHtml(m.store)}` : "";
     linhas.push(
       `<b>${formatBRL(m.priceCents)}</b>${loja} · ${m.postedAt.slice(0, 10)}`,
-      `<a href="${escapeHtml(m.url)}">${escapeHtml(primeiraLinha(m.text))}</a>`,
-      "",
+      `<a href="${escapeHtml(m.url)}">${escapeHtml(tituloDoPost(m.text))}</a>`,
     );
+    if (m.productUrl) {
+      linhas.push(`<a href="${escapeHtml(m.productUrl)}">ir para a oferta</a>`);
+    }
+    linhas.push("");
   }
 
   const botoes: Array<{ text: string; callback_data: string }> = [];

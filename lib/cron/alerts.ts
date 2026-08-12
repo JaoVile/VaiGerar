@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { formatBRL } from "@/lib/bot/format";
+import { formatBRL, tituloDoPost } from "@/lib/bot/format";
 import { casa, type Hunt } from "@/lib/hunts/match";
 import { buscar, MESES_PADRAO } from "@/lib/search/query";
 import type { PriceStats } from "@/lib/search/stats";
@@ -99,12 +99,11 @@ export function formatAlerta(hunt: Hunt, post: AlertPost, stats: PriceStats | nu
   // pé. Mesmo com a janela de 48h, o usuário precisa ver do quando é o que
   // ele vai clicar — mesmo formato de `formatSearch` (AAAA-MM-DD).
   const quando = post.postedAt.slice(0, 10);
-  const primeira =
-    post.text
-      .split("\n")
-      .find((l) => l.trim().length > 0)
-      ?.trim()
-      .slice(0, 80) ?? "";
+  // Mesma escolha de título de `formatSearch`/`formatSearchPagina` — extraída
+  // para `tituloDoPost` em vez de duplicada, porque o defeito era o mesmo:
+  // pegar a primeira linha do post derruba em cima de emoji de abertura
+  // (`🚨🚨`, `😱😱`) em vez do nome do produto.
+  const titulo = tituloDoPost(post.text, 80);
 
   const linhas = [
     `🎯 <b>${escapeHtml(hunt.label)}</b>`,
@@ -123,7 +122,7 @@ export function formatAlerta(hunt: Hunt, post: AlertPost, stats: PriceStats | nu
 
   linhas.push(
     `postado em ${escapeHtml(quando)}`,
-    `${escapeHtml(primeira)}`,
+    `${escapeHtml(titulo)}`,
     `<a href="${escapeHtml(post.url)}">ver post</a>`,
   );
   return linhas.join("\n");

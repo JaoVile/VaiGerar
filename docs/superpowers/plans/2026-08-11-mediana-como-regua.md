@@ -167,6 +167,12 @@ Em `lib/search/query.ts`, dentro de `buscar`, substitua o trecho que monta
   // final é recalculada sobre o conjunto já filtrado. Sem a segunda passada, o
   // "menor preço" mostrado ao usuário continuaria sendo o acessório que o piso
   // acabou de descartar do ranking — a linha de estatística contradiria a lista.
+  // O sort no cliente é obrigatório e tem teste próprio: a consulta NÃO pede
+  // ordenação ao Postgres (isso enviesava a estatística, ver histórico de
+  // `tests/search/query.test.ts`). Sem esta linha, `melhores` sai na ordem que
+  // o banco devolveu e dois testes pré-existentes quebram.
+  todos.sort((a, b) => a.priceCents - b.priceCents);
+
   const bruta = priceStats(todos.map((t) => t.priceCents));
   const filtrados = bruta ? aplicarPiso(todos, bruta.medianCents) : todos;
   const stats = priceStats(filtrados.map((t) => t.priceCents));

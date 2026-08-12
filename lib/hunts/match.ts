@@ -4,6 +4,8 @@ export type Hunt = {
   id: string;
   chatId: number;
   label: string;
+  /** Termo original de busca (coluna `query`, `not null` em `hunts`) — usado para calcular a estatística de mercado no alerta. */
+  query: string;
   termsAny: string[];
   termsNone: string[];
   priceMinCents: number;

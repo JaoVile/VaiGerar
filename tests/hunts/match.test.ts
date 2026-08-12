@@ -36,6 +36,7 @@ const hunt = {
   id: "h1",
   chatId: 1,
   label: "S25+",
+  query: "s25 plus",
   termsAny: ["s25+", "s25 plus"],
   termsNone: ["capa", "pelicula", "seminovo"],
   priceMinCents: 285000,

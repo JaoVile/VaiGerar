@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { formatBRL } from "@/lib/bot/format";
 import { formatAlerta, processarAlertas } from "@/lib/cron/alerts";
 import { TelegramRateLimitError } from "@/lib/telegram";
 import { argsDe, createQueryFake, todasAsChamadas } from "@/tests/helpers/fake-db";
@@ -15,6 +16,7 @@ const hunt = {
   id: "h1",
   chatId: 7,
   label: "Galaxy S25+",
+  query: "s25 plus",
   termsAny: ["s25+"],
   termsNone: [],
   priceMinCents: 285000,
@@ -32,31 +34,62 @@ const post = {
 
 describe("formatAlerta", () => {
   it("mostra o rótulo da caça e o preço", () => {
-    const s = formatAlerta(hunt, post);
+    const s = formatAlerta(hunt, post, null);
     expect(s).toContain("Galaxy S25+");
     expect(s).toContain("R$ 2.899,00");
   });
 
   it("mostra a loja e o link do post", () => {
-    const s = formatAlerta(hunt, post);
+    const s = formatAlerta(hunt, post, null);
     expect(s).toContain("amazon");
     expect(s).toContain("https://t.me/x/1");
   });
 
   it("escapa HTML vindo do texto do post", () => {
-    const s = formatAlerta(hunt, { ...post, text: "TV <b>50</b> & tal" });
+    const s = formatAlerta(hunt, { ...post, text: "TV <b>50</b> & tal" }, null);
     expect(s).toContain("&lt;b&gt;");
   });
 
   it("mostra a data do post — oferta antiga tem que se denunciar", () => {
     // Sem a data, "R$ 2.899,00 — 8% abaixo do teto" parece oferta de agora
     // mesmo quando não é; o usuário só descobre clicando.
-    expect(formatAlerta(hunt, post)).toContain("2026-08-10");
+    expect(formatAlerta(hunt, post, null)).toContain("2026-08-10");
   });
 
   it("diz quanto está abaixo do teto da faixa", () => {
     // teto 315000, preço 289900 → 8% abaixo
-    expect(formatAlerta(hunt, post)).toMatch(/8%/);
+    expect(formatAlerta(hunt, post, null)).toMatch(/8%/);
+  });
+});
+
+describe("formatAlerta com contexto de mercado", () => {
+  const stats = {
+    count: 91,
+    minCents: 351900,
+    medianCents: 396800,
+    maxCents: 449900,
+  };
+
+  it("diz quanto está abaixo da mediana quando há estatística", () => {
+    const s = formatAlerta(hunt, post, stats);
+    // 289900 contra mediana 396800 → 27% abaixo
+    expect(s).toMatch(/27%/);
+    expect(s.toLowerCase()).toContain("mediana");
+  });
+
+  it("mantém a leitura da faixa do usuário", () => {
+    expect(formatAlerta(hunt, post, stats).toLowerCase()).toContain("faixa");
+  });
+
+  it("omite a linha de mercado quando não há estatística", () => {
+    const s = formatAlerta(hunt, post, null);
+    expect(s.toLowerCase()).not.toContain("mediana");
+    expect(s).toContain(formatBRL(post.priceCents));
+  });
+
+  it("não quebra quando o preço está acima da mediana", () => {
+    const caro = { ...post, priceCents: 420000 };
+    expect(() => formatAlerta(hunt, caro, stats)).not.toThrow();
   });
 });
 
@@ -66,6 +99,7 @@ const huntRow = {
   id: "h1",
   chat_id: 7,
   label: "Galaxy S25+",
+  query: "s25 plus",
   terms_any: ["s25+"],
   terms_none: [],
   price_min_cents: 285000,

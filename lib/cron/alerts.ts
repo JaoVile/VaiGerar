@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatBRL } from "@/lib/bot/format";
 import { casa, type Hunt } from "@/lib/hunts/match";
+import { buscar, MESES_PADRAO } from "@/lib/search/query";
+import type { PriceStats } from "@/lib/search/stats";
 import { escapeHtml, sendMessage, TelegramRateLimitError } from "@/lib/telegram";
 
 export type AlertPost = {
@@ -80,8 +82,18 @@ function cronometro(): () => number {
   return () => Date.now() - inicio;
 }
 
-export function formatAlerta(hunt: Hunt, post: AlertPost): string {
-  const abaixo = Math.round((1 - post.priceCents / hunt.priceMaxCents) * 100);
+/**
+ * `stats` é a estatística de mercado da caça (mediana dos últimos
+ * `MESES_PADRAO` meses, já com o piso de acessório aplicado por `buscar`) —
+ * ou `null` quando a busca falhou ou não há dado suficiente. É enfeite, não
+ * requisito: sem ela o alerta ainda sai, só sem a linha de mediana.
+ *
+ * As duas leituras são informações diferentes: o teto é o que o usuário
+ * pediu ("atende seu pedido"); a mediana é o que o mercado cobra ("é bom
+ * negócio").
+ */
+export function formatAlerta(hunt: Hunt, post: AlertPost, stats: PriceStats | null): string {
+  const abaixoDaFaixa = Math.round((1 - post.priceCents / hunt.priceMaxCents) * 100);
   const loja = post.store ? ` · ${escapeHtml(post.store)}` : "";
   // Data do post, sempre: o preço sozinho não diz se a oferta ainda está de
   // pé. Mesmo com a janela de 48h, o usuário precisa ver do quando é o que
@@ -93,13 +105,28 @@ export function formatAlerta(hunt: Hunt, post: AlertPost): string {
       .find((l) => l.trim().length > 0)
       ?.trim()
       .slice(0, 80) ?? "";
-  return [
+
+  const linhas = [
     `🎯 <b>${escapeHtml(hunt.label)}</b>`,
-    `<b>${formatBRL(post.priceCents)}</b> — ${abaixo}% abaixo do teto da sua faixa${loja}`,
+    `<b>${formatBRL(post.priceCents)}</b>${loja}`,
+    `${abaixoDaFaixa}% abaixo do teto da sua faixa`,
+  ];
+
+  // A leitura que diz se a oferta é boa de verdade: o teto é escolha do
+  // usuário, a mediana é o que o mercado cobra.
+  if (stats) {
+    const abaixoDoMercado = Math.round((1 - post.priceCents / stats.medianCents) * 100);
+    linhas.push(
+      `${abaixoDoMercado}% abaixo da mediana de ${MESES_PADRAO} meses (${formatBRL(stats.medianCents)})`,
+    );
+  }
+
+  linhas.push(
     `postado em ${escapeHtml(quando)}`,
     `${escapeHtml(primeira)}`,
     `<a href="${escapeHtml(post.url)}">ver post</a>`,
-  ].join("\n");
+  );
+  return linhas.join("\n");
 }
 
 function toHunt(row: Record<string, unknown>): Hunt {
@@ -107,6 +134,7 @@ function toHunt(row: Record<string, unknown>): Hunt {
     id: row.id as string,
     chatId: row.chat_id as number,
     label: row.label as string,
+    query: row.query as string,
     termsAny: row.terms_any as string[],
     termsNone: row.terms_none as string[],
     priceMinCents: row.price_min_cents as number,
@@ -139,6 +167,33 @@ function filaPorChat(): Enfileirar {
     );
     return atual;
   };
+}
+
+/**
+ * Estatística de mercado da caça, com cache por invocação. A mediana é
+ * calculada uma vez por caça que tem alerta pendente, não uma vez por
+ * alerta — o `tick` tem orçamento apertado (`ORCAMENTO_ENTREGA_MS`) e
+ * alertas da mesma caça sempre dariam o mesmo número.
+ *
+ * É enfeite, não requisito: se `buscar` falhar, devolve `null` em vez de
+ * propagar o erro — o alerta sai sem a linha de mercado em vez de não sair.
+ */
+async function statsDaCaca(
+  db: SupabaseClient,
+  hunt: Hunt,
+  cache: Map<string, PriceStats | null>,
+): Promise<PriceStats | null> {
+  const emCache = cache.get(hunt.id);
+  if (emCache !== undefined) return emCache;
+  try {
+    const { stats } = await buscar(db, hunt.query);
+    cache.set(hunt.id, stats);
+    return stats;
+  } catch (e) {
+    console.error("Estatística da caça falhou:", e instanceof Error ? e.message : e);
+    cache.set(hunt.id, null);
+    return null;
+  }
 }
 
 export async function processarAlertas(
@@ -221,6 +276,11 @@ export async function processarAlertas(
     .limit(LOTE_ENVIO);
   if (pendErr) throw new Error(`Lendo alertas pendentes: ${pendErr.message}`);
 
+  // Estatística de mercado por caça: um `Map` por invocação (nunca global —
+  // vazaria entre execuções da função serverless), calculado na primeira vez
+  // que a caça aparece no lote e reaproveitado pelos alertas seguintes dela.
+  const statsPorHunt = new Map<string, PriceStats | null>();
+
   // Cada alerta é independente — claim e leituras vão em paralelo (mesmo
   // padrão do `ingestAll`) pra não estourar o `maxDuration` da rota. Só o
   // `sendMessage` passa pela fila por chat. `allSettled` porque um item que
@@ -229,7 +289,7 @@ export async function processarAlertas(
   const enfileirar = filaPorChat();
   const resultados = await Promise.allSettled(
     (pendentes ?? []).map((a) =>
-      processarUmAlerta(db, token, a, agora, leaseCutoffIso, enfileirar, decorridoMs),
+      processarUmAlerta(db, token, a, agora, leaseCutoffIso, enfileirar, decorridoMs, statsPorHunt),
     ),
   );
 
@@ -267,6 +327,7 @@ async function processarUmAlerta(
   leaseCutoffIso: string,
   enfileirar: Enfileirar,
   decorridoMs: () => number,
+  statsPorHunt: Map<string, PriceStats | null>,
 ): Promise<ResultadoAlerta> {
   // Guarda de prazo, checada *antes* do claim de propósito: uma linha
   // adiada aqui não pode ganhar `attempts` nem `claimed_at` — ela tem que
@@ -309,14 +370,19 @@ async function processarUmAlerta(
     if (!hRow || !pRow) throw new Error("caça ou post sumiu");
 
     const hunt = toHunt(hRow);
-    const texto = formatAlerta(hunt, {
-      rowId: pRow.id as number,
-      text: pRow.text as string,
-      priceCents: pRow.price_cents as number,
-      store: pRow.store as string | null,
-      url: pRow.url as string,
-      postedAt: pRow.posted_at as string,
-    });
+    const stats = await statsDaCaca(db, hunt, statsPorHunt);
+    const texto = formatAlerta(
+      hunt,
+      {
+        rowId: pRow.id as number,
+        text: pRow.text as string,
+        priceCents: pRow.price_cents as number,
+        store: pRow.store as string | null,
+        url: pRow.url as string,
+        postedAt: pRow.posted_at as string,
+      },
+      stats,
+    );
     await enfileirar(hunt.chatId, () => sendMessage(token, hunt.chatId, texto));
     await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
     await db.from("hunts").update({ last_alert_at: agora.toISOString() }).eq("id", hunt.id);

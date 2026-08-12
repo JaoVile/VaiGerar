@@ -1,19 +1,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { autorizado, extrairEntrada, tratar } from "@/lib/bot/router";
-import { FLOW_CACA } from "@/lib/bot/session";
+import { FLOW_BUSCA, FLOW_CACA } from "@/lib/bot/session";
 import type { SearchResult } from "@/lib/search/query";
 
 // Mocka só o I/O do Telegram; `escapeHtml` continua sendo o de verdade —
 // é justamente ele que está sob teste no bloco de /cacas abaixo.
-const { sendMessageMock, answerCallbackQueryMock } = vi.hoisted(() => ({
+const { sendMessageMock, answerCallbackQueryMock, editMessageTextMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn(),
   answerCallbackQueryMock: vi.fn(),
+  editMessageTextMock: vi.fn(),
 }));
 vi.mock("@/lib/telegram", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/telegram")>()),
   sendMessage: sendMessageMock,
   answerCallbackQuery: answerCallbackQueryMock,
+  editMessageText: editMessageTextMock,
 }));
 
 // `buscar` mockado, mas imitando o comportamento real que importa pro bug que
@@ -382,5 +384,168 @@ describe("tratar /agora", () => {
     expect(textos.some((t) => t.includes("/cacar"))).toBe(true);
     // A busca continua acontecendo — o aviso é além do resultado, não em vez dele.
     expect(sendMessageMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/**
+ * Fake com sessão **persistente**: `upsert` grava, `maybeSingle` devolve o que
+ * foi gravado. `dbSessoes` (acima) não serve aqui — ele devolve sempre a mesma
+ * sessão inicial, então um `/agora` que deixasse de chamar `salvarSessao`
+ * passaria batido. Com estado de verdade, o teste fim a fim `/agora` → clique
+ * em "mais ofertas" cobra o fio inteiro.
+ */
+function dbSessaoPersistente(inicial: Record<string, unknown> | null = null): SupabaseClient {
+  let linha = inicial;
+  const chain = {
+    select: vi.fn(() => chain),
+    eq: vi.fn(() => chain),
+    maybeSingle: vi.fn(() => Promise.resolve({ data: linha, error: null })),
+    upsert: vi.fn((row: Record<string, unknown>) => {
+      linha = row;
+      return Promise.resolve({ data: null, error: null });
+    }),
+    delete: vi.fn(() => chain),
+  };
+  return { from: vi.fn(() => chain) } as unknown as SupabaseClient;
+}
+
+/** Sessão de busca válida, do jeito que `salvarSessao` grava. */
+function sessaoDeBusca(termo: string): Record<string, unknown> {
+  return {
+    flow: FLOW_BUSCA,
+    step: "resultado",
+    data: { termo },
+    expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+  };
+}
+
+function callbacksDe(opts: unknown): string[] {
+  const kb = (opts as { keyboard?: { inline_keyboard: Array<Array<{ callback_data: string }>> } })
+    ?.keyboard;
+  return (kb?.inline_keyboard.flat() ?? []).map((b) => b.callback_data);
+}
+
+/**
+ * Achado do review final: o handler do botão "mais ofertas" não tinha teste
+ * nenhum. Provado por mutação — trocar todo o bloco `if (texto.startsWith("pag:"))`
+ * por `return;` deixava os 225 testes passando, e `editMessageText` não
+ * aparecia em nenhum deles. `formatSearchPagina` estava coberto; o *fio* que
+ * faz o botão funcionar (ler a sessão, checar o flow, re-buscar, editar a
+ * mensagem) não estava.
+ */
+describe('tratar clique de "mais ofertas" (pag:)', () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+    answerCallbackQueryMock.mockReset();
+    editMessageTextMock.mockReset();
+    buscarMock.mockReset();
+    buscarMock.mockImplementation(buscarFake);
+  });
+
+  it("com sessão de busca válida, edita a mensagem original com a página pedida", async () => {
+    const db = dbSessaoPersistente(sessaoDeBusca("air fryer"));
+    await tratar(db, "tok", {
+      chatId: 7,
+      texto: "pag:5",
+      callbackId: "cb1",
+      messageId: 42,
+    });
+
+    // O clique é confirmado (senão o Telegram deixa o botão "girando").
+    expect(answerCallbackQueryMock).toHaveBeenCalledWith("tok", "cb1");
+
+    expect(editMessageTextMock).toHaveBeenCalledTimes(1);
+    const [token, chatId, messageId, html, opts] = editMessageTextMock.mock.calls[0];
+    expect(token).toBe("tok");
+    expect(chatId).toBe(7);
+    // O messageId do clique é o que faz a página trocar na mesma mensagem em
+    // vez de empilhar mensagem nova a cada clique.
+    expect(messageId).toBe(42);
+
+    // Conteúdo da página 2 (offset 5, 5 por página): itens 5..9, e não o 0.
+    expect(html).toContain("Produto 5");
+    expect(html).toContain("Produto 9");
+    expect(html).not.toContain("Produto 0");
+    expect(html).toContain("mostrando 6–10 de 12");
+    expect(callbacksDe(opts)).toEqual(expect.arrayContaining(["pag:0", "pag:10"]));
+
+    // Editar é o ponto do botão: mandar mensagem nova aqui seria a regressão.
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    // Re-busca pelo termo guardado na sessão, com o limite de paginação (não o
+    // default de 5 — senão a página 2 nem existiria).
+    const [, termoBuscado, optsBusca] = buscarMock.mock.calls.at(-1) as [
+      unknown,
+      string,
+      { limite: number },
+    ];
+    expect(termoBuscado).toBe("air fryer");
+    expect(optsBusca.limite).toBeGreaterThan(5);
+  });
+
+  it("sem sessão nenhuma, avisa que a busca expirou e não edita nada", async () => {
+    const db = dbSessaoPersistente(null);
+    await tratar(db, "tok", {
+      chatId: 7,
+      texto: "pag:5",
+      callbackId: "cb1",
+      messageId: 42,
+    });
+
+    expect(editMessageTextMock).not.toHaveBeenCalled();
+    expect(buscarMock).not.toHaveBeenCalled();
+    const textos = sendMessageMock.mock.calls.map((c) => String(c[2]).toLowerCase());
+    expect(textos.some((t) => t.includes("expirou"))).toBe(true);
+  });
+
+  it("com sessão de OUTRO flow (caça em andamento), também trata como busca expirada", async () => {
+    const db = dbSessaoPersistente({
+      flow: FLOW_CACA,
+      step: "ask_price",
+      data: { produto: "air fryer" },
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    await tratar(db, "tok", {
+      chatId: 7,
+      texto: "pag:5",
+      callbackId: "cb1",
+      messageId: 42,
+    });
+
+    expect(editMessageTextMock).not.toHaveBeenCalled();
+    expect(buscarMock).not.toHaveBeenCalled();
+    const textos = sendMessageMock.mock.calls.map((c) => String(c[2]).toLowerCase());
+    expect(textos.some((t) => t.includes("expirou"))).toBe(true);
+  });
+
+  // Trava o `salvarSessao(..., FLOW_BUSCA, ...)` do `/agora`: sem ele a sessão
+  // nunca é gravada e o primeiro clique no botão já cai em "busca expirou".
+  it("fim a fim: /agora grava a sessão que o botão de paginar consome depois", async () => {
+    const db = dbSessaoPersistente(null);
+    await tratar(db, "tok", { chatId: 7, texto: "/agora air fryer" });
+    sendMessageMock.mockClear();
+
+    await tratar(db, "tok", {
+      chatId: 7,
+      texto: "pag:5",
+      callbackId: "cb1",
+      messageId: 42,
+    });
+
+    expect(editMessageTextMock).toHaveBeenCalledTimes(1);
+    expect(String(editMessageTextMock.mock.calls[0][3])).toContain("Produto 5");
+    const textos = sendMessageMock.mock.calls.map((c) => String(c[2]).toLowerCase());
+    expect(textos.some((t) => t.includes("expirou"))).toBe(false);
+  });
+
+  // Payload do Telegram sem `message` (mensagem velha demais, por exemplo):
+  // não dá pra editar, mas o usuário não pode ficar sem resposta.
+  it("sem messageId, cai pra mensagem nova em vez de falhar em silêncio", async () => {
+    const db = dbSessaoPersistente(sessaoDeBusca("air fryer"));
+    await tratar(db, "tok", { chatId: 7, texto: "pag:5", callbackId: "cb1" });
+
+    expect(editMessageTextMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(String(sendMessageMock.mock.calls[0][2])).toContain("Produto 5");
   });
 });

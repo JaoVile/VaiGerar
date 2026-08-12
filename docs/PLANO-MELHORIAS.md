@@ -1,123 +1,155 @@
-# Plano de melhorias — pós-lançamento
+# Plano de melhorias
 
-Escrito em 2026-08-11, com o sistema já em produção: 13 canais coletando,
-~20 mil posts em janela de 3 meses, bot respondendo, 6 caças ativas.
+Atualizado em 2026-08-11, com o sistema em produção: 13 canais coletando,
+~20 mil posts em janela de 3 meses, bot respondendo, 6 caças ativas, 233 testes.
 
-Cada item traz o **problema com evidência real** (medida no arquivo, não
-suposta), a abordagem, e as decisões que precisam ser tomadas antes de
-escrever código.
+Cada item traz o **problema com evidência medida** (não suposta), a abordagem,
+e as decisões a tomar antes de escrever código.
 
-## Ordem sugerida, e por quê
+## Ordem
 
-| # | item | por que nessa posição |
-|---|---|---|
-| 1 | Ranquear pela mediana | corrige o defeito mais visível no uso diário |
-| 2 | Alerta com contexto de mediana | mesma ideia do 1, aplicada no outro lugar que você olha |
-| 3 | Paginação do `/agora` | pedido direto, e depende do ranqueamento do 1 estar bom |
-| 4 | Tendência de preço | única que cria capacidade nova; dado já está pago |
-| 5 | Segundo bot (China) | separa conversa; schema já aguenta desde o dia 1 |
-| 6 | Resumo diário | cortado do escopo original; menor urgência |
+| # | item | tipo | por que nessa posição |
+|---|---|---|---|
+| **0** | **Título e link do resultado** | **defeito** | está no ar e atrapalha todo uso |
+| 1 | Provar o alerta em produção | verificação | o propósito do sistema nunca aconteceu |
+| 2 | Guarda de prazo inerte | dívida | risco real de alerta duplicado |
+| 3 | Casamento semântico | qualidade | teto de precisão atual |
+| 4 | Tendência de preço | capacidade nova | dado já pago |
+| 5 | Cobertura onde o dado é fino | dado | dobrável e academia sem amostra |
 
-Os itens 1, 2 e 3 formam uma rodada coerente — os três mexem em como
-resultado de busca é ordenado e apresentado.
+Os itens 0 e 1 são baratos e devem vir juntos. O 2 é dívida com risco. O 3 é a
+mudança que mais melhora precisão daqui pra frente.
 
 ---
 
-## 1. Ranquear pela distância da mediana
+## 0. Resultado sem informação útil — DEFEITO EM PRODUÇÃO
 
-**Problema, medido:** `/agora air fryer` devolve como primeiro resultado uma
-**forma de silicone para** air fryer a R$10,30. `/agora mesa` devolve taça
-para mesa posta a R$19,90. O termo casa; o produto não.
+**Medido em 2026-08-11**, buscando `samsung s25 plus` (53 ofertas):
+**44 delas (83%) mostram título inútil.**
 
-A causa é a ordenação: `lib/search/query.ts` ordena por `price_cents` e
-`melhores` pega os 5 primeiros. Acessório barato sempre ganha o topo.
+O que o usuário vê hoje:
 
-**Abordagem:** trocar a ordenação de `melhores` por distância da mediana.
-Calcula-se a mediana do conjunto casado (já existe, `priceStats`), e ordena-se
-por `|preço − mediana|`, ou por um escore que penalize desvio extremo para
-baixo mais que para cima — uma forma de silicone a 96% abaixo da mediana afunda
-sozinha, sem lista de palavras proibidas para manter eternamente.
+```
+R$ 3.519,12 · samsung · 2026-08-01
+🚨🚨                                ← isto é o link clicável
+```
 
-**Decisão a tomar:** ordenar por distância pura trocaria "as 5 mais baratas"
-por "as 5 mais típicas", o que não é o que você quer — você quer barato **e**
-plausível. Provável saída: filtrar fora o que estiver muito abaixo da mediana
-(um piso relativo, ex.: 40% dela) e **dentro do que sobrou** continuar
-ordenando por preço crescente. Assim o topo continua sendo o mais barato de
-verdade, sem acessório.
+**Causa:** `primeiraLinha` em `lib/bot/format.ts` pega a primeira linha
+não-vazia do post. Vários canais (o `ctofertascelulares` sempre) abrem o post
+com uma linha só de emoji — `🚨🚨`, `😱😱`, `🔥🔥`. Essa linha vira o texto do
+link, e o usuário não faz ideia do que está clicando.
 
-**Por que isso importa além da busca:** é o mesmo mecanismo que resolveria
-estruturalmente as variantes de cupom (`FOLLOW-UPS.md` registra três já
-encontradas). Lista de marcadores é manutenção infinita; piso relativo à
-mediana afunda qualquer valor absurdo, inclusive os que ninguém previu.
+**Segunda camada:** a coluna `product_url` — o link direto da loja — **está
+gravada no banco e nunca é usada**. O link exibido aponta para o post do
+Telegram; o usuário clica, cai no post, e precisa clicar de novo para chegar
+na loja. Em canais que encurtam pelo domínio próprio (`canalte.ch`), são dois
+saltos até o produto.
 
-## 2. Alerta com contexto de mediana
+**Abordagem:**
 
-**Problema:** o alerta diz *"12% abaixo do teto da sua faixa"*. O teto foi você
-que escolheu, então o número não informa nada sobre a oferta ser boa — só que
-ela está dentro do que você pediu.
-
-**Abordagem:** trocar por *"18% abaixo da mediana dos últimos 3 meses"*.
-`processarAlertas` já tem o post e a caça; falta consultar a estatística do
-termo da caça no momento do alerta.
-
-**Decisão a tomar:** calcular a mediana a cada alerta custa uma consulta a mais
-por entrega, dentro de um tick que já tem orçamento apertado
-(`ORCAMENTO_ENTREGA_MS = 35s`, ver `FOLLOW-UPS.md`). Alternativa: guardar a
-mediana na linha de `hunts`, recalculada uma vez por dia. Decidir antes de
-implementar — a segunda é mais barata em tempo de tick e mais complexa em
-estado.
-
-**Cuidado:** manter também a informação de faixa. Ideal é a mensagem trazer as
-duas leituras — quanto está abaixo da sua meta **e** quanto está abaixo do que
-o mercado costuma cobrar.
-
-## 3. Paginação do `/agora` — "ver mais ofertas"
-
-**Pedido:** poder ver todas as ofertas encontradas, não só as 5 primeiras,
-clicando num botão.
-
-**A armadilha que decide o desenho:** `callback_data` do Telegram é limitado a
-**64 bytes**. Não dá para carregar o termo buscado no botão — `mais:calça de
-academia masculina:5` já é arriscado, e termo longo estoura silenciosamente.
-
-**Abordagem:** o botão carrega só o deslocamento (`mais:5`, `mais:10`), e o
-**termo vem da última busca guardada** em `bot_sessions` para aquele `chat_id`.
-A tabela já existe e já é usada pelo fluxo do `/cacar`; o campo `data` é `jsonb`
-e comporta `{ ultimaBusca: "air fryer", offset: 5 }`.
+- `primeiraLinha` passa a escolher a primeira linha com **conteúdo de verdade**,
+  não a primeira não-vazia. Critério objetivo: pelo menos N caracteres
+  alfanuméricos depois de remover emoji e pontuação (o teste que mediu usou
+  12 como corte e separou bem os 44 casos ruins). Se nenhuma linha qualificar,
+  cair no texto inteiro truncado em vez de mostrar emoji.
+- Exibir **os dois links** quando existirem: o do post (contexto, comentários,
+  cupom no texto) e o `product_url` (vai direto pra loja). Ou, se preferir uma
+  linha só, usar o `product_url` como destino principal e deixar o post como
+  secundário.
 
 **Decisões a tomar:**
 
-- **Conflito com o `/cacar`.** Hoje `bot_sessions` guarda uma sessão por chat, e
-  o roteador decide o que fazer com texto livre olhando se existe sessão ativa.
-  Guardar busca ali pode fazer o bot achar que está no meio de um `/cacar`.
-  Duas saídas: um campo `flow` distinto (`"busca"` vs `"new_hunt"`) que o
-  roteador respeita, ou uma tabela separada. A primeira é mais barata; a
-  segunda não mistura conceitos. **Escolher antes de escrever código** — o
-  roteador tem lógica de sessão que quebra fácil.
-- **Expiração.** Sessão de `/cacar` expira em 10 min. Busca guardada com a
-  mesma regra significa que clicar "ver mais" 15 minutos depois falha. Melhor
-  um prazo maior para busca, ou uma mensagem clara de "essa busca expirou,
-  manda de novo".
-- **Quantas por página.** Hoje são 5. Telegram tem limite de ~4096 caracteres
-  por mensagem, e cada oferta ocupa 2 linhas com link. 5 por página é
-  conservador; 10 provavelmente cabe. Medir antes de escolher.
-- **Editar ou mandar nova mensagem.** `editMessageText` mantém o chat limpo
-  (uma mensagem que muda de conteúdo); mandar nova preserva o histórico das
-  páginas já vistas. Preferir editar, com botões "◀ anterior" e "próxima ▶".
+- **O corte de 12 caracteres é arbitrário.** Medir contra mais termos antes de
+  fixar — o número saiu de uma amostra só. Vale testar 8, 12 e 20 sobre vários
+  termos e ver qual separa melhor.
+- **`product_url` pode ser encurtador do próprio canal** (`canalte.ch`), que
+  não leva direto à loja e ainda passa pelo rastreio do canal. Não é mentira
+  chamá-lo de "link da loja"? Talvez o rótulo deva ser neutro ("ir para a
+  oferta") em vez de prometer a loja.
+- **Emoji no meio do título** é aceitável; o problema é linha *só* de emoji.
+  Não remova emoji do texto, só descarte a linha que não tem mais nada.
 
-**Limite do teto de leitura:** `buscar` lê no máximo `TETO_LINHAS = 2000`. Para
-termo com mais resultados que isso, "ver todas" é na verdade "ver as 2000
-lidas". Documentar isso na mensagem quando o teto for atingido, em vez de
-mentir que são todas.
+**Este item afeta também o alerta** (`formatAlerta` em `lib/cron/alerts.ts` usa
+a mesma lógica de primeira linha) — corrigir nos dois lugares, ou extrair a
+função para um único ponto.
 
-## 4. Tendência de preço — "vale esperar?"
+## 1. Provar o alerta em produção
 
-**Oportunidade:** o arquivo tem 3 meses de preço por produto e a busca só olha
-o agregado. A pergunta que está por trás do projeto inteiro — *vale comprar
-agora ou esperar?* — já tem dado para ser respondida.
+**Situação:** nenhuma caça disparou desde que o sistema entrou no ar. Matching,
+claim atômico, lease, entrega e formato de mensagem foram verificados por
+teste — nunca pela realidade. As 6 caças ativas têm alvos 2–7% abaixo do mínimo
+histórico, então podem ficar semanas sem disparar. Se algo estiver quebrado, a
+descoberta acontece no dia em que uma oferta boa for perdida.
 
-**Abordagem:** agrupar os resultados casados por semana (ou quinzena) e mostrar
-a mediana de cada período:
+**Abordagem:** criar uma caça descartável com faixa propositalmente larga (ex.:
+`fone bluetooth` entre R$50 e R$500, onde o arquivo tem 452 ofertas), esperar o
+tick de 5 minutos, confirmar que o alerta chega ao Telegram com o formato certo,
+e apagar a caça.
+
+**O que isso prova de uma vez:** `casa()` contra dado real, o claim atômico com
+o `claimed_at`, a entrega serializada por chat, a linha de mediana do alerta, e
+o `unique(hunt_id, post_row_id)` impedindo repetição no tick seguinte.
+
+**Cuidado:** confirmar que o alerta **não repete** no tick seguinte antes de
+apagar a caça — é a metade do comportamento que só a realidade prova.
+
+## 2. A guarda de prazo é inerte
+
+**Medido:** `ORCAMENTO_ENTREGA_MS` (35s) deveria parar de iniciar envios perto
+do fim do orçamento da função. Não funciona. `Promise.allSettled` invoca as 5
+chamadas **sincronamente**, e `decorridoMs()` é a primeira instrução antes de
+qualquer `await` — os cinco leem o mesmo instante (`[2,2,2,2,2]` ms numa
+execução de 344 ms).
+
+O teste passa porque o `decorridoMs` injetado conta **chamadas**, não tempo —
+documenta um mecanismo que o relógio real não produz.
+
+**Por que importa:** essa guarda foi a correção de uma regressão de timeout
+(serialização por chat elevou o pior caso do tick de ~32s para ~92s contra 60s
+de `maxDuration`). A regressão continua sem defesa efetiva, e estourar o
+`maxDuration` é o gatilho realista da entrega duplicada.
+
+**Abordagem:** a guarda precisa ser checada **entre** os envios, não no início
+de todos. Duas saídas: serializar o laço de entrega com checagem de prazo a
+cada iteração (perde o paralelismo entre chats distintos, que hoje é
+irrelevante porque o sistema é mono-usuário), ou manter o paralelismo e checar
+o prazo dentro da fila por chat, antes de cada `sendMessage`.
+
+**Decisão a tomar:** o teste precisa usar relógio de verdade (com envios
+artificialmente lentos) em vez de contador de chamadas, senão o próximo
+mecanismo também vai parecer funcionar sem funcionar.
+
+## 3. Casamento semântico
+
+**Problema, com dois casos reais:** `casa()` e a busca usam `includes` sobre
+texto normalizado. Consequências medidas:
+
+- `/agora mesa` traz **ventilador de mesa** no topo (preço plausível, o piso
+  não pega)
+- um post do **Huawei Mate X6** casou com uma busca por Z Fold porque o texto
+  dizia *"concorre diretamente com o Samsung Galaxy Z Fold7"*
+
+O piso de 25% resolveu preço absurdo. Isto é o outro lado: o termo casa, o
+produto não.
+
+**Abordagem:** casamento por limite de palavra em vez de substring.
+
+**A dificuldade real:** `s25+` tem `+`, que não é caractere de palavra; hífen e
+acento também quebram `\b` em JS (já mordeu nesta base — em `"só"`, existe
+fronteira de palavra depois do `s`). Precisa de tokenização própria, não de
+`\b`.
+
+**Decisão a tomar:** limite de palavra sozinho não resolve o caso do Huawei —
+lá o termo aparece de verdade, só que numa frase de comparação. Isso exigiria
+detectar contexto ("concorre com", "igual ao", "melhor que"), que é lista de
+padrões, ou uma camada LLM. Decidir até onde ir antes de começar; a parte de
+limite de palavra é barata e cobre a maioria.
+
+## 4. Tendência de preço
+
+**Oportunidade:** o arquivo tem 3 meses de preço por produto e só responde o
+agregado. A pergunta que originou o projeto — *comprar agora ou esperar?* — já
+tem dado.
 
 ```
 S25 Plus — últimos 3 meses
@@ -128,63 +160,37 @@ ago: R$ 3.968  ▇▇▇▇▇▇
 → caindo ~2%/mês
 ```
 
-Isso muda decisão de compra mais que saber o mínimo histórico.
+**Limitação medida:** celular de linha S tem 53 a 91 anúncios em 3 meses —
+amostra suficiente. Dobrável tem **2**. Para esses, tendência não é calculável
+e a mensagem precisa dizer isso em vez de desenhar reta com dois pontos.
 
-**Limitação honesta, medida:** a janela de 3 meses dá amostra para celular de
-linha S (62 a 91 anúncios) mas não para produto de baixo volume — dobrável
-aparece **2 vezes** no período inteiro. Para esses, tendência não é calculável
-e a mensagem precisa dizer isso em vez de desenhar uma linha com dois pontos.
+**Decisão a tomar:** se tendência virar prioridade, a janela de 3 meses vira o
+gargalo. Voltar para 6 meses custa ~102 MB de 500 — folgado. Reavaliar a
+escolha feita em 2026-08-10.
 
-**Decisão a tomar:** se tendência virar prioridade real, a janela de 3 meses
-vira o gargalo. Voltar para 6 meses custa espaço (~75 mil posts, ~102 MB de
-500 MB) — ainda folgado. Reavaliar a escolha feita em 2026-08-10.
+## 5. Cobertura onde o dado é fino
 
-## 5. Segundo bot — separar importados
+**Medido:** dobrável aparece 2 vezes em 3 meses; não existe canal de
+fitness/suplemento vivo no cadastro (os que os sites listam estão mortos —
+`achadosacademia` parou em dezembro/2024).
 
-**Situação:** o schema tem `channels.kind` (`tech`, `china`, `moda`, `casa`,
-`geral`) e `hunts.bot_key` desde a primeira migration. Nunca foram usados.
-Hoje AliExpress e Shopee se misturam com Amazon na mesma conversa.
+**Abordagem:** canais de **loja específica** em vez de agregador — Centauro,
+Netshoes, Growth para academia. Verificar cada um com `t.me/s/<slug>` antes de
+cadastrar: dos 23 candidatos testados em 2026-08-10, **8 estavam mortos** apesar
+de listados como ativos.
 
-**Abordagem:** criar o segundo bot no BotFather, acrescentar
-`TELEGRAM_BOT_TOKEN_CHINA` ao `readBotEnv`, e rotear a entrega pelo `bot_key`
-da caça. A rota de webhook já é `[bot]` — foi desenhada para dois desde o
-início.
-
-**Decisão a tomar:** o que define o `bot_key` de uma caça nova? Duas opções:
-o bot em que o `/cacar` foi digitado (implícito, sem pergunta a mais), ou uma
-pergunta explícita no fluxo. A primeira é mais natural e não alonga a conversa.
-
-**Cuidado:** `ALLOWED_CHAT_IDS` é global hoje. Com dois bots, avaliar se a
-allowlist deve ser por bot — provavelmente não, já que é o mesmo dono.
-
-## 6. Resumo diário
-
-**Foi cortado do escopo da Etapa C de propósito**, junto com `/resumo` e
-`/config`, porque comando que configura funcionalidade inexistente é ruído.
-O desenho está no spec original (§5 e §6 de
-`docs/superpowers/specs/2026-08-05-cacador-ofertas-design.md`), incluindo o
-schema já pronto em `user_settings` (`digest_enabled`, `digest_hour`,
-`digest_sent_on`).
-
-**O que ele responde que o alerta avulso não responde:** *"o S25 Plus apareceu
-em 3 lojas hoje; mais barato R$3.519 na Amazon, mais caro R$3.899 no Magalu"* —
-comparação entre lojas no mesmo dia.
-
-**Decisão a tomar:** o alerta imediato já avisa. O resumo só se justifica se
-agrupar de fato — se na maioria dos dias tiver uma linha só, vira ruído
-diário. Medir quantos alertas por dia o sistema gera **depois** de as caças
-começarem a disparar, antes de construir.
+**Cuidado com o volume:** canal novo entra em `channels` e passa a contar no
+teto do free tier. A purga de 3 meses estabiliza, mas cada canal sobe o platô.
 
 ---
 
 ## Fora de escopo, e por quê
 
-- **Camada LLM no matcher.** `lib/hunts/` foi isolado desde o começo para
-  permitir isso sem reescrever nada, mas os itens 1 e 2 devem resolver a maior
-  parte do problema de acessório sem custo de API nem dependência externa.
-  Reavaliar só se sobrarem falsos positivos depois deles.
+- **Camada LLM no matcher.** `lib/hunts/` foi isolado para permitir isso sem
+  reescrever nada, mas o item 3 deve resolver a maior parte sem custo de API.
+  Reavaliar depois dele.
 - **Consultar preço direto nas lojas.** Descartado no spec original por
   anti-bot e manutenção alta. Nada mudou.
-- **Resolver encurtador de link por HTTP.** Uma requisição extra por post na
-  ingestão, milhares por dia, para melhorar a detecção de loja em um canal.
-  Só valeria restrito aos posts que viram alerta.
+- **Segundo bot (China) e resumo diário.** Continuam válidos, mas são
+  organização e conveniência — os itens acima são correção e precisão.
+  Descritos no histórico deste documento e no spec original.

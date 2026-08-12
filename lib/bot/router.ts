@@ -25,15 +25,24 @@ export type Entrada = {
 /** Itens por página do `/agora`. Ver `docs/PLANO-MELHORIAS.md` (item 3). */
 const POR_PAGINA = 5;
 /**
- * Quantas ofertas `buscar` deixa disponíveis para paginar. Não é "todas as
- * casadas" (isso é `TETO_LINHAS = 2000` em `lib/search/query.ts`) — é um teto
- * deliberadamente menor para manter a consulta e o payload do Telegram leves.
- * 50 dá 10 páginas de 5, o suficiente pra "ver mais" ser útil sem virar uma
+ * Quantas ofertas ficam disponíveis para paginar. `buscar` sempre lê até
+ * `TETO_LINHAS = 2000` linhas do banco e calcula sort/stats sobre o conjunto
+ * inteiro, não importa este número — `limite` só corta um `.slice` em
+ * memória no final (`lib/search/query.ts`), então não há economia de
+ * consulta aqui, só controle de quanto fica disponível pro "ver mais". 50 dá
+ * 10 páginas de 5: o suficiente pra a navegação ser útil sem virar uma
  * segunda paginação por trás da paginação.
  */
 const LIMITE_PAGINACAO = 50;
 /** Sessão de busca dura mais que a de `/cacar`: voltar num resultado depois é normal. */
 const EXPIRA_BUSCA_MIN = 60;
+/**
+ * `salvarSessao` sobrescreve qualquer sessão existente (`chat_id` é PK,
+ * upsert com `onConflict`). Sem este aviso, `/agora` no meio de um `/cacar`
+ * em andamento perderia o progresso da caça em silêncio — perda explícita é
+ * aceitável, silenciosa não.
+ */
+const AVISO_CACA_CANCELADA = "Sua caça em andamento foi cancelada. Use /cacar pra recomeçar.";
 
 /**
  * Clique de botão vira texto: `tol:10` → `10`, `del:<id>` → `del:<id>`,
@@ -86,6 +95,15 @@ async function buscarEEnviar(
   chatId: number,
   termo: string,
 ): Promise<void> {
+  // `/agora` chega aqui sem passar pela checagem de sessão de `tratar` — se
+  // houver uma caça em andamento, `salvarSessao` logo abaixo vai
+  // sobrescrevê-la. Avisa antes de fazer isso, em vez de deixar o usuário
+  // descobrir sozinho que a caça sumiu.
+  const sessaoAnterior = await lerSessao(db, chatId);
+  if (sessaoAnterior && sessaoAnterior.flow === FLOW_CACA) {
+    await sendMessage(token, chatId, AVISO_CACA_CANCELADA);
+  }
+
   const r = await buscar(db, termo, { limite: LIMITE_PAGINACAO });
   await salvarSessao(db, chatId, FLOW_BUSCA, "resultado", { termo }, new Date(), EXPIRA_BUSCA_MIN);
   const pagina = formatSearchPagina(r, 0, POR_PAGINA);

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { autorizado, extrairEntrada, tratar } from "@/lib/bot/router";
+import { FLOW_CACA } from "@/lib/bot/session";
+import type { SearchResult } from "@/lib/search/query";
 
 // Mocka só o I/O do Telegram; `escapeHtml` continua sendo o de verdade —
 // é justamente ele que está sob teste no bloco de /cacas abaixo.
@@ -12,6 +14,18 @@ vi.mock("@/lib/telegram", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/telegram")>()),
   sendMessage: sendMessageMock,
   answerCallbackQuery: answerCallbackQueryMock,
+}));
+
+// `buscar` mockado, mas imitando o comportamento real que importa pro bug que
+// este mock existe pra travar: sem `opts.limite`, devolve só 5 `melhores`
+// (o mesmo default de `LIMITE_PADRAO` em `lib/search/query.ts`). Se o
+// roteador parar de passar `{ limite: LIMITE_PAGINACAO }`, este mock volta a
+// se comportar como o `buscar` real sem paginação — e o botão "mais ofertas"
+// some, do jeito que sumiria em produção.
+const { buscarMock } = vi.hoisted(() => ({ buscarMock: vi.fn() }));
+vi.mock("@/lib/search/query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/search/query")>()),
+  buscar: buscarMock,
 }));
 
 describe("extrairEntrada", () => {
@@ -166,5 +180,113 @@ describe("tratar /cacas", () => {
   it("avisa quando não há nenhuma caça ativa", async () => {
     await tratar(dbComHunts([]), "tok", { chatId: 7, texto: "/cacas" });
     expect(String(sendMessageMock.mock.calls[0][2])).toContain("Nenhuma caça ativa");
+  });
+});
+
+/**
+ * Fake mínimo pro caminho de `/agora`: só `bot_sessions.select().eq()
+ * .maybeSingle()` (lido por `lerSessao`) e `bot_sessions.upsert()` (escrito
+ * por `salvarSessao`). `sessaoInicial` é o que `lerSessao` devolve — `null`
+ * simula chat sem sessão ativa.
+ */
+function dbSessoes(sessaoInicial: Record<string, unknown> | null): {
+  db: SupabaseClient;
+  upserts: Array<Record<string, unknown>>;
+} {
+  const upserts: Array<Record<string, unknown>> = [];
+  const chain = {
+    select: vi.fn(() => chain),
+    eq: vi.fn(() => chain),
+    maybeSingle: vi.fn(() => Promise.resolve({ data: sessaoInicial, error: null })),
+    upsert: vi.fn((row: Record<string, unknown>) => {
+      upserts.push(row);
+      return Promise.resolve({ data: null, error: null });
+    }),
+  };
+  return {
+    db: { from: vi.fn(() => chain) } as unknown as SupabaseClient,
+    upserts,
+  };
+}
+
+/** 12 ofertas fake, ordenadas por preço — o bastante pra passar de uma página. */
+function buscarFake(
+  _db: SupabaseClient,
+  termo: string,
+  opts?: { meses?: number; limite?: number },
+): Promise<SearchResult> {
+  // Sem `opts.limite`, imita o LIMITE_PADRAO=5 real — é o que faz este mock
+  // pegar a regressão, não só simular um `buscar` genérico.
+  const limite = opts?.limite ?? 5;
+  const todos = Array.from({ length: 12 }, (_, i) => ({
+    text: `Produto ${i}`,
+    priceCents: (i + 1) * 1000,
+    store: "amazon",
+    postedAt: "2026-08-01T12:00:00Z",
+    url: `https://t.me/x/${i}`,
+  }));
+  return Promise.resolve({
+    termo,
+    stats: {
+      count: todos.length,
+      minCents: 1000,
+      medianCents: 6500,
+      maxCents: 12000,
+    },
+    melhores: todos.slice(0, limite),
+  });
+}
+
+describe("tratar /agora", () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+    answerCallbackQueryMock.mockReset();
+    buscarMock.mockReset();
+    buscarMock.mockImplementation(buscarFake);
+  });
+
+  // Achado 1 do fix round 1: nada travava `LIMITE_PAGINACAO` — os 214 testes
+  // da Task 3 passavam mesmo removendo `{ limite: LIMITE_PAGINACAO }` do
+  // roteador, porque nenhum chamava `tratar()` com `/agora`. Este teste falha
+  // nesse cenário: sem o `limite` maior, `buscarFake` devolve só 5
+  // `melhores` e o botão "mais ofertas ▶" nunca aparece.
+  it('/agora com mais de 5 resultados oferece o botão "mais ofertas"', async () => {
+    const { db } = dbSessoes(null);
+    await tratar(db, "tok", { chatId: 7, texto: "/agora air fryer" });
+
+    const ultimaChamada = sendMessageMock.mock.calls.at(-1);
+    const opts = ultimaChamada?.[3] as {
+      keyboard?: { inline_keyboard: unknown[][] };
+    };
+    const cbs = (
+      (opts?.keyboard?.inline_keyboard.flat() ?? []) as Array<{
+        callback_data: string;
+      }>
+    ).map((b) => b.callback_data);
+    expect(cbs).toContain("pag:5");
+  });
+
+  it("sem sessão de caça ativa, /agora não avisa cancelamento", async () => {
+    const { db } = dbSessoes(null);
+    await tratar(db, "tok", { chatId: 7, texto: "/agora air fryer" });
+
+    const textos = sendMessageMock.mock.calls.map((c) => String(c[2]));
+    expect(textos.some((t) => t.toLowerCase().includes("cancelada"))).toBe(false);
+  });
+
+  it("com sessão de caça em andamento, /agora avisa que ela foi cancelada", async () => {
+    const { db } = dbSessoes({
+      flow: FLOW_CACA,
+      step: "ask_product",
+      data: {},
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    await tratar(db, "tok", { chatId: 7, texto: "/agora air fryer" });
+
+    const textos = sendMessageMock.mock.calls.map((c) => String(c[2]));
+    expect(textos.some((t) => t.toLowerCase().includes("cancelada"))).toBe(true);
+    expect(textos.some((t) => t.includes("/cacar"))).toBe(true);
+    // A busca continua acontecendo — o aviso é além do resultado, não em vez dele.
+    expect(sendMessageMock.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

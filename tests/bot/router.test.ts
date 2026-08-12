@@ -136,9 +136,13 @@ function dbComHunts(hunts: Array<Record<string, unknown>>): SupabaseClient {
   return { from: vi.fn(() => chain) } as unknown as SupabaseClient;
 }
 
-const hunt = (label: string) => ({
+// `query` default = `label` mantém os testes antigos (que não configuram
+// `buscarMock`) intocados. Os testes de wiring abaixo passam um `query`
+// deliberadamente diferente do `label`, pra pegar quem trocar um pelo outro.
+const hunt = (label: string, query = label) => ({
   id: "11111111-1111-1111-1111-111111111111",
   label,
+  query,
   price_min_cents: 285000,
   price_max_cents: 315000,
   is_active: true,
@@ -148,6 +152,7 @@ describe("tratar /cacas", () => {
   beforeEach(() => {
     sendMessageMock.mockReset();
     answerCallbackQueryMock.mockReset();
+    buscarMock.mockReset();
   });
 
   it("lista as caças ativas com a faixa de preço", async () => {
@@ -180,6 +185,95 @@ describe("tratar /cacas", () => {
   it("avisa quando não há nenhuma caça ativa", async () => {
     await tratar(dbComHunts([]), "tok", { chatId: 7, texto: "/cacas" });
     expect(String(sendMessageMock.mock.calls[0][2])).toContain("Nenhuma caça ativa");
+  });
+
+  // Fix round 1: os três testes acima nunca configuram `buscarMock`, então
+  // `buscar` sempre devolve `undefined`, o `try/catch` do router engole o
+  // erro e os dois campos de mercado ficam `null` — os 223 testes anteriores
+  // passavam mesmo com `h.query` trocado por `h.label`, um nome de campo
+  // errado (`price_cents` em vez de `priceCents`), ou a chamada a `buscar`
+  // comentada inteira. Este teste roda o handler de verdade com um
+  // `SearchResult` real e afirma sobre a mensagem enviada — e o `query` da
+  // caça é deliberadamente diferente do `label` pra pegar quem usar o
+  // campo errado.
+  it("busca o mercado de cada caça pelo `query` e mostra melhor preço e % acima do teto", async () => {
+    buscarMock.mockImplementation((_db: unknown, termo: string) => {
+      if (termo !== "termo de mercado") {
+        return Promise.reject(new Error(`termo inesperado: ${termo}`));
+      }
+      return Promise.resolve({
+        termo,
+        stats: {
+          count: 9,
+          minCents: 300000,
+          medianCents: 340000,
+          maxCents: 500000,
+        },
+        melhores: [
+          {
+            text: "Galaxy S25 Plus lacrado",
+            priceCents: 346500,
+            store: "amazon",
+            postedAt: "2026-08-01T12:00:00Z",
+            url: "https://t.me/x/1",
+          },
+        ],
+      });
+    });
+
+    await tratar(dbComHunts([hunt("s25 plus", "termo de mercado")]), "tok", {
+      chatId: 7,
+      texto: "/cacas",
+    });
+
+    expect(buscarMock).toHaveBeenCalledWith(expect.anything(), "termo de mercado", {
+      limite: 1,
+    });
+    const [, , html] = sendMessageMock.mock.calls[0];
+    // melhor atual (346500 = R$ 3.465,00) e teto da faixa (315000) → 10% acima
+    expect(html).toContain("R$ 3.465,00");
+    expect(html).toMatch(/10%/);
+    expect(html).toContain("R$ 3.400,00"); // mediana de 3 meses, também extraída de `r.stats`
+  });
+
+  // Minor do revisor: prova o isolamento por caça fim-a-fim — uma caça com
+  // dado de mercado real e outra cujo `buscar` falha aparecem na MESMA
+  // mensagem, cada uma com o estado certo. Sem este teste, um bug que
+  // vazasse a falha de uma caça pra todas (ou vice-versa) passaria batido.
+  it("isola falha por caça: uma caça com dado, outra sem, na mesma mensagem", async () => {
+    buscarMock.mockImplementation((_db: unknown, termo: string) => {
+      if (termo === "termo bom") {
+        return Promise.resolve({
+          termo,
+          stats: {
+            count: 3,
+            minCents: 280000,
+            medianCents: 300000,
+            maxCents: 320000,
+          },
+          melhores: [
+            {
+              text: "oferta boa",
+              priceCents: 300000,
+              store: "amazon",
+              postedAt: "2026-08-01T12:00:00Z",
+              url: "https://t.me/x/2",
+            },
+          ],
+        });
+      }
+      return Promise.reject(new Error("mercado fora do ar"));
+    });
+
+    const hunts = [hunt("caça boa", "termo bom"), hunt("caça ruim", "termo ruim")];
+    await tratar(dbComHunts(hunts), "tok", { chatId: 7, texto: "/cacas" });
+
+    const [, , html] = sendMessageMock.mock.calls[0];
+    expect(html).toContain("caça boa");
+    expect(html).toContain("R$ 3.000,00");
+    expect(html.toLowerCase()).toContain("dentro da faixa");
+    expect(html).toContain("caça ruim");
+    expect(html.toLowerCase()).toContain("nenhuma oferta");
   });
 });
 

@@ -269,7 +269,7 @@ describe("processarAlertas — claim com lease", () => {
     // `last_alert_at` da entrega. Asserção por conteúdo, não por posição —
     // contar updates fazia este teste quebrar quando a marca d'água entrou.
     const updateHunts = db.de("update", "hunts");
-    const marcados = updateHunts.filter((u) => "last_alert_at" in u.patch);
+    const marcados = updateHunts.filter((u) => "last_alert_at" in (u.patch ?? {}));
     expect(marcados).toHaveLength(1);
     expect(marcados[0].patch).toEqual({
       last_alert_at: AGORA.toISOString(),
@@ -309,7 +309,7 @@ describe("processarAlertas — claim com lease", () => {
     const db = cenario();
     await processarAlertas(db.client, "tok", AGORA);
 
-    const marca = db.de("update", "hunts").filter((u) => "last_post_row_id" in u.patch);
+    const marca = db.de("update", "hunts").filter((u) => "last_post_row_id" in (u.patch ?? {}));
     expect(marca).toHaveLength(1);
     expect(marca[0].patch).toEqual({ last_post_row_id: 10 });
     // Restrito às caças lidas no início do tick: caça criada no meio do tick

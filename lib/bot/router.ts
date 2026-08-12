@@ -1,8 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { iniciar, receber, type Step } from "@/lib/bot/flows/new-hunt";
-import { type CacaResumo, formatAjuda, formatCacas, formatSearchPagina } from "@/lib/bot/format";
+import {
+  type CacaResumo,
+  formatAjuda,
+  formatCacas,
+  formatCupons,
+  formatSearchPagina,
+} from "@/lib/bot/format";
 import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 import { FLOW_BUSCA, FLOW_CACA, lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
+import { buscarCupons } from "@/lib/search/coupons";
 import { buscar } from "@/lib/search/query";
 import { answerCallbackQuery, editMessageText, sendMessage } from "@/lib/telegram";
 
@@ -206,6 +213,27 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
     const out = iniciar();
     await salvarSessao(db, chatId, FLOW_CACA, "ask_product", out.data, new Date());
     await sendMessage(token, chatId, out.texto);
+    return;
+  }
+
+  if (comando === "/cupom" || comando === "/cupons") {
+    const loja = limpo.slice(comando.length).trim();
+    if (!loja) {
+      await sendMessage(
+        token,
+        chatId,
+        [
+          "Use assim: <code>/cupom amazon</code>",
+          "",
+          "Lojas com mais cupom no arquivo: <code>amazon</code>, <code>mercado livre</code>, <code>magalu</code>, <code>shopee</code>, <code>kabum</code>, <code>aliexpress</code>.",
+        ].join("\n"),
+      );
+      return;
+    }
+    // Sem try/catch aqui de propósito: quem chama esta função já embrulha tudo
+    // num try que responde 200, pra o Telegram não reenviar o update em laço.
+    const r = await buscarCupons(db, loja);
+    await sendMessage(token, chatId, formatCupons(r));
     return;
   }
 

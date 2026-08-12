@@ -1,3 +1,4 @@
+import type { ResultadoCupons } from "@/lib/search/coupons";
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
 import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
 
@@ -223,6 +224,73 @@ export function formatSearchPagina(
   };
 }
 
+/**
+ * Nome bonito da loja pra exibição. `posts.store` guarda o slug técnico
+ * (`mercadolivre`), que fica feio numa lista pro usuário ler.
+ */
+const NOME_LOJA: Record<string, string> = {
+  mercadolivre: "Mercado Livre",
+  amazon: "Amazon",
+  magalu: "Magalu",
+  shopee: "Shopee",
+  kabum: "KaBuM",
+  aliexpress: "AliExpress",
+  samsung: "Samsung",
+  casasbahia: "Casas Bahia",
+};
+
+function nomeLoja(slug: string | null): string {
+  if (!slug) return "loja não identificada";
+  return NOME_LOJA[slug] ?? slug;
+}
+
+/** "hoje", "ontem", "há 2 dias" — validade não dá pra saber, idade dá. */
+function idadeEmDias(iso: string, agora: Date): string {
+  const dias = Math.floor((agora.getTime() - new Date(iso).getTime()) / 86_400_000);
+  if (dias <= 0) return "hoje";
+  if (dias === 1) return "ontem";
+  return `há ${dias} dias`;
+}
+
+/**
+ * O aviso não é enfeite: o post traz o código, nunca até quando ele vale.
+ * Sem dizer isso, um cupom de 3 dias atrás que já morreu passa por "cupom
+ * ativo" e o usuário culpa o bot. Mesmo princípio do rodapé do `/cacas`.
+ */
+const RODAPE_CUPONS =
+  "<i>Os canais publicam o código, não a validade. " +
+  "Por isso mostro há quanto tempo cada um saiu — os de hoje são a aposta melhor.</i>";
+
+export function formatCupons(r: ResultadoCupons, agora: Date = new Date()): string {
+  const alvo = r.loja ? nomeLoja(r.loja) : "todas as lojas";
+  if (r.cupons.length === 0) {
+    return [
+      `Não achei cupom de <b>${escapeHtml(alvo)}</b> nos últimos ${r.dias} dias.`,
+      "",
+      "Tente <code>/cupom amazon</code>, <code>/cupom mercado livre</code>, <code>/cupom magalu</code> ou <code>/cupom shopee</code> — são as lojas com mais cupom no arquivo.",
+    ].join("\n");
+  }
+
+  const linhas = [
+    `🎟 <b>${escapeHtml(alvo)}</b> — ${r.cupons.length} cupons dos últimos ${r.dias} dias`,
+    "",
+  ];
+  for (const c of r.cupons) {
+    const extras: string[] = [];
+    if (c.descontoTexto) extras.push(escapeHtml(c.descontoTexto));
+    if (c.pisoCents !== null) extras.push(`acima de ${formatBRL(c.pisoCents)}`);
+    if (!r.loja) extras.push(nomeLoja(c.store));
+    const detalhe = extras.length > 0 ? ` — ${extras.join(" · ")}` : "";
+    linhas.push(
+      `<code>${escapeHtml(c.codigo)}</code>${detalhe}`,
+      `<i>${idadeEmDias(c.postedAt, agora)}</i> · <a href="${escapeHtml(c.url)}">ver post</a>`,
+      "",
+    );
+  }
+  linhas.push(RODAPE_CUPONS);
+  return linhas.join("\n");
+}
+
 export type CacaResumo = {
   label: string;
   priceMinCents: number;
@@ -331,6 +399,17 @@ export function formatAjuda(): string {
     "4️⃣ tolerância (botões de 5%, 10% e 15%, cada um mostrando a faixa em reais)",
     "",
     "Depois disso eu te aviso sozinho quando aparecer na faixa. Não precisa ficar olhando.",
+    "",
+    "<b>━━━ Cupom da loja ━━━</b>",
+    "",
+    "/cupom &lt;loja&gt; — os códigos que saíram nos últimos dias:",
+    "",
+    "<code>/cupom amazon</code>",
+    "<code>/cupom mercado livre</code>",
+    "<code>/cupom magalu</code>",
+    "",
+    "Entendo apelido: <code>ml</code>, <code>meli</code>, <code>magazine luiza</code>.",
+    "Os canais publicam o código, nunca a validade — por isso mostro há quantos dias cada um saiu.",
     "",
     "/cacas — lista suas caças, com botão de excluir",
     "/ajuda — esta mensagem",

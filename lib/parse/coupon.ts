@@ -47,6 +47,26 @@ const RE_CODIGO = /(?:cupom|c[oó]digo|[🎟🏷🎫])\s*:?\s*([A-Z0-9][A-Z0-9._
  * fariam o comando parecer quebrado logo na primeira linha.
  */
 const NAO_E_CODIGO = new Set([
+  // Nome de loja: "cupom Amazon R$150" e "cupom Mercado Livre 15%" apareciam
+  // como se AMAZON e MERCADO fossem códigos — foi o que a primeira lista real
+  // do /cupom mostrou no topo, em 12/08. Cupom que *contém* nome de loja
+  // (MELICUPOM, TUDOAMAZON) não é afetado: a comparação é do token inteiro.
+  "ALIEXPRESS",
+  "AMAZON",
+  "BAHIA",
+  "CASAS",
+  "CENTAURO",
+  "KABUM",
+  "LIVRE",
+  "MAGALU",
+  "MAGAZINE",
+  "MELI",
+  "MERCADO",
+  "NETSHOES",
+  "SAMSUNG",
+  "SHEIN",
+  "SHOPEE",
+
   "ABAIXO",
   "ACIMA",
   "ADEUS",

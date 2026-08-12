@@ -31,6 +31,22 @@ describe("extrairCupons", () => {
     expect(extrairCupons("O CUPOM está na página")).toEqual([]);
   });
 
+  // Apareceu na primeira lista real do /cupom, em 12/08: "AMAZON — R$150 de
+
+  // desconto" e "MERCADO — 15%" no topo, como se fossem código.
+
+  it("nome de loja não vira código", () => {
+    expect(extrairCupons("cupom Amazon R$150 de desconto")).toEqual([]);
+
+    expect(extrairCupons("cupom MERCADO livre 15%")).toEqual([]);
+  });
+
+  it("cupom que contém nome de loja continua valendo", () => {
+    expect(extrairCupons("cupom: MELICUPOM").map((c) => c.codigo)).toEqual(["MELICUPOM"]);
+
+    expect(extrairCupons("cupom: TUDOAMAZON").map((c) => c.codigo)).toEqual(["TUDOAMAZON"]);
+  });
+
   it("descarta código só de dígitos e repetição sem sentido", () => {
     expect(extrairCupons("cupom: 12345")).toEqual([]);
     expect(extrairCupons("cupom: AAAA")).toEqual([]);

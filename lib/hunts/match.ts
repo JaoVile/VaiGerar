@@ -1,4 +1,5 @@
 import { normalizar } from "@/lib/hunts/terms";
+import { casaTermo } from "@/lib/hunts/termo";
 
 export type Hunt = {
   id: string;
@@ -31,7 +32,15 @@ export function casa(texto: string, priceCents: number | null, hunt: Hunt): bool
   if (priceCents === null) return false;
   if (priceCents < hunt.priceMinCents || priceCents > hunt.priceMaxCents) return false;
 
+  // `termsNone` continua por substring de propósito: é lista de veto, e ali
+  // um falso positivo (rejeitar demais) custa muito menos que um falso
+  // negativo (alertar sobre capa de celular). "capa" pegando "capinha" é o
+  // comportamento desejado.
   const t = normalizar(texto);
   if (hunt.termsNone.some((n) => t.includes(normalizar(n)))) return false;
-  return hunt.termsAny.some((a) => t.includes(normalizar(a)));
+
+  // `termsAny` passa pelo casamento por token — ver `lib/hunts/termo.ts` pro
+  // número que justifica: 61% dos casamentos de `galaxy s25` por substring
+  // eram outro aparelho da linha.
+  return hunt.termsAny.some((a) => casaTermo(texto, a));
 }

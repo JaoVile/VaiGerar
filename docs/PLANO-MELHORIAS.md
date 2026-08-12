@@ -13,7 +13,7 @@ e as decisões a tomar antes de escrever código.
 | ~~0~~ | ~~Título e link do resultado~~ | defeito | **feito em 11/08 e corrigido de novo em 12/08** |
 | ~~1~~ | ~~Provar o alerta em produção~~ | verificação | **feito em 12/08 — ver abaixo** |
 | ~~2~~ | ~~Guarda de prazo inerte~~ | dívida | **feito em 12/08** |
-| 3 | Casamento semântico | qualidade | teto de precisão atual |
+| ~~3~~ | ~~Casamento semântico~~ | qualidade | **feito em 12/08 no alerta** |
 | 4 | Tendência de preço | capacidade nova | dado já pago |
 | 5 | Cobertura onde o dado é fino | dado | dobrável e academia sem amostra |
 
@@ -171,7 +171,40 @@ o prazo dentro da fila por chat, antes de cada `sendMessage`.
 artificialmente lentos) em vez de contador de chamadas, senão o próximo
 mecanismo também vai parecer funcionar sem funcionar.
 
-## 3. Casamento semântico
+## 3. Casamento semântico — FEITO no alerta em 2026-08-12
+
+**A medição contradisse este plano.** Contando, em 12.000 posts reais, quantos
+casamentos por substring estavam errados:
+
+| modo de erro | frequência |
+|---|---:|
+| modelo base casando o superior (`galaxy s25` -> Ultra/FE/Plus) | **61%** (48 de 79) |
+| termo como modificador ("ventilador **de mesa**") | 27% em "mesa", 1-2% nos outros |
+| frase de comparação ("concorre com o Z Fold7") | **0,20%** dos posts |
+| termo colado dentro de palavra maior | **4 a 9 posts em 12.000** |
+
+O plano propunha **limite de palavra**, que resolve só a última linha — a mais
+rara — e **não resolve nenhum dos dois exemplos que o próprio plano cita**.
+
+`lib/hunts/termo.ts` ataca as duas primeiras: tokeniza preservando o `+`
+(`s25+` e `s25` são caças diferentes, com alvos de R$ 3.000 e R$ 2.600),
+rejeita quando o token seguinte é qualificador de linha (plus/ultra/edge/fe/
+pro/max/lite/mini/neo) e rejeita quando o anterior é preposição. Verificado no
+arquivo: de 84 posts com "galaxy s25" e preço, **69 são rejeitados** — S25+,
+FE, Ultra e Edge — e os 15 aprovados são todos S25 base.
+
+`termsNone` **continua por substring de propósito**: é lista de veto, onde
+rejeitar demais custa muito menos que deixar passar. "capa" pegando "capinha"
+é o comportamento desejado.
+
+**Falta:** aplicar o mesmo casamento na busca (`/agora`), que usa full-text do
+Postgres e tem o problema do "ventilador de mesa". A frase de comparação
+(0,20%) ficou fora — não paga a lista de padrões.
+
+---
+
+## 3-bis. Análise original (mantida para histórico)
+
 
 **Problema, com dois casos reais:** `casa()` e a busca usam `includes` sobre
 texto normalizado. Consequências medidas:

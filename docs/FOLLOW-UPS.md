@@ -106,6 +106,86 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
   são preço de produto — o certo seria `null`. Não é regressão (antes gravava o
   valor do cupom, pior), e esses posts raramente casam com busca de produto.
 
+## Review final da branch `mediana-regua` (2026-08-12)
+
+Achados da última revisão antes do merge. Os quatro que valiam correção
+imediata (rótulo do `/cacas`, piso ignorado na faixa, handler do botão "mais
+ofertas" sem teste, "0% acima do teto") foram corrigidos nesta mesma rodada.
+Estes cinco ficaram, com o porquê.
+
+- **A guarda `ORCAMENTO_ENTREGA_MS` é inerte com relógio real.**
+  `processarAlertas` monta os até `LOTE_ENVIO` envios com
+  `Promise.allSettled((pendentes).map(...))`: o `.map` invoca as 5 chamadas de
+  `processarUmAlerta` **sincronamente**, e `decorridoMs()` é a primeira
+  instrução da função, antes de qualquer `await`. As 5 leem, portanto, o mesmo
+  instante. Medido num tick real: `[2, 2, 2, 2, 2]` ms para uma execução de
+  **344 ms** de duração. O comportamento pretendido — "as primeiras vão, o
+  resto fica pro próximo tick" — nunca acontece; ou nenhuma é adiada (caso
+  normal), ou todas seriam.
+
+  O teste passa porque o `decorridoMs` injetado conta **chamadas**, não tempo:
+  ele documenta um mecanismo que o relógio real não produz. **Isso importa mais
+  que os outros itens desta lista:** essa guarda foi a correção de uma
+  regressão de timeout registrada logo acima neste mesmo arquivo ("Entrega
+  duplicada de alerta"), e essa regressão continua sem defesa efetiva.
+
+  Não foi corrigido agora porque o conserto não é local: exige medir o tempo
+  *entre* os inícios (fila com concorrência limitada, ou checar o orçamento
+  logo antes do `sendMessage` em vez de antes do claim) e reescrever o teste
+  para tempo real ou relógio fake — mudança de desenho no caminho crítico de
+  entrega, arriscada de emendar numa rodada de correção de review.
+
+- **A memoização de `statsDaCaca` não tem teste e não rende na configuração
+  atual.** Remover o cache inteiro deixa os testes passando (225/225 no momento
+  da medição). O fixture esconde o caso real: o `.single()` do fake ignora o
+  filtro `eq`, então os 5 alertas do lote resolvem para a *mesma* caça e o
+  cache acerta por acidente. Em produção há 6 caças distintas; um lote de 5
+  alertas de caças diferentes faz 5 `buscar` distintos — benefício zero, e o
+  cache só paga quando a mesma caça tem 2+ alertas no mesmo lote.
+
+  Não é bug (o cache está correto, inclusive ao guardar a promise em vez do
+  valor); é código sem cobertura e sem retorno hoje. Fica porque passa a
+  render sozinho se o lote crescer ou uma caça casar vários posts no mesmo
+  tick. Ao mexer: corrigir o fake para respeitar o `eq` antes de escrever o
+  teste, senão ele nasce testando o acidente.
+
+- **O post que dispara o alerta nunca passa pelo piso de 25%.** `aplicarPiso`
+  (`lib/search/stats.ts`, `PISO_FRACAO = 0.25`) filtra o **conjunto da
+  estatística** dentro de `buscar`; o post que vira alerta vem de `casa()`
+  (`lib/hunts/match.ts`), que só olha a faixa da caça e os termos. Efeito: um
+  post muito abaixo da mediana pode alertar dizendo "83% abaixo da mediana"
+  enquanto o `/agora` do mesmo termo esconde esse mesmo post por considerá-lo
+  acessório. Duas leituras do mesmo dado, com critérios diferentes.
+
+  Não corrigido agora porque o piso da caça (`priceMinCents`) já cobre o caso
+  comum e aplicar o piso relativo também no alerta muda *quais alertas saem* —
+  é mudança de comportamento do motor, não de texto, e merece decisão
+  deliberada em vez de carona numa rodada de review.
+
+- **`buscar` puxa a coluna `text` para chamadores que só querem preço.** O
+  `select` é `text,price_cents,store,posted_at,url` sobre até `TETO_LINHAS =
+  2000` linhas. `statsDaCaca` usa só a mediana; o `/cacas` usa só o primeiro
+  preço e a mediana. Nenhum dos dois lê `text`, mas os dois carregam o corpo do
+  post — ~0,6–1,6 MB por consulta, e o `/cacas` faz uma por caça (6 hoje). Um
+  `buscar` que aceitasse selecionar só `price_cents` nesses casos cortaria ~90%
+  do payload.
+
+  Não corrigido agora porque exige uma variante do `buscar` (ou um parâmetro de
+  projeção) e mexer no tipo de retorno, o que toca todos os chamadores — e o
+  tempo de resposta atual não é problema para o usuário.
+
+- **Toque duplo no botão "mais ofertas" gera erro visível.** O segundo clique
+  no mesmo botão renderiza texto idêntico, o Telegram devolve 400 `message is
+  not modified`, `editMessageText` lança, e o usuário vê "Deu erro aqui do meu
+  lado. Tenta de novo em instantes." — para uma ação que na verdade deu certo.
+  A rota continua respondendo 200 (o `try/catch` em volta de `tratar()` na
+  rota do webhook cobre tudo), então a invariante do webhook está intacta.
+
+  Não corrigido agora porque a correção certa é tratar `message is not
+  modified` como sucesso dentro de `lib/telegram.ts` — mexer no cliente HTTP
+  compartilhado por todos os envios, num caso que é cosmético e disparado só
+  por clique repetido.
+
 ## Avaliado e descartado
 
 - `assertCronAuth` usa `!==` em vez de comparação constant-time. Timing attack

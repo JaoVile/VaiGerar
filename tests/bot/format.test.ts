@@ -168,16 +168,47 @@ describe("formatCacas", () => {
     expect(s).toContain(formatBRL(330000));
   });
 
-  it("mostra o melhor preço atual e quanto falta cair", () => {
+  it("mostra o melhor preço do arquivo e quanto falta cair", () => {
     const s = formatCacas([base]);
     expect(s).toContain(formatBRL(351912));
     // 351912 contra teto 330000 → 7% acima
     expect(s).toMatch(/7%/);
   });
 
-  it("avisa quando já está dentro da faixa", () => {
+  // O preço vem de `buscar`, que lê a janela de MESES_PADRAO meses — não o que
+  // está de pé agora. Chamar isso de "melhor agora" fazia o usuário esperar por
+  // um alerta que nunca vem (o alerta só olha post recente).
+  it("rotula o preço com a janela de busca, não como preço de agora", () => {
+    const s = formatCacas([base]);
+    expect(s).toContain(`melhor em ${MESES_PADRAO} meses`);
+    expect(s).not.toContain("melhor agora");
+  });
+
+  it("avisa que o preço na faixa é do arquivo, não uma oferta viva agora", () => {
     const s = formatCacas([{ ...base, melhorAtualCents: 320000 }]);
-    expect(s.toLowerCase()).toContain("dentro da faixa");
+    expect(s.toLowerCase()).toContain("já apareceu na sua faixa");
+    // A ressalva tem que estar na mensagem, senão "na faixa" se lê como
+    // "está disponível agora por esse preço".
+    expect(s.toLowerCase()).toMatch(/oferta já encerrada|reaparecer/);
+  });
+
+  // `casa()` rejeita preço abaixo do piso — o piso existe pra acessório não
+  // disparar alerta. Imprimir esse preço como "na faixa" fazia a listagem e o
+  // motor de alerta discordarem sobre a mesma pergunta.
+  it("não chama de faixa um preço abaixo do piso, e diz por quê", () => {
+    const s = formatCacas([{ ...base, melhorAtualCents: 250000 }]);
+    expect(s).toContain(formatBRL(250000));
+    expect(s.toLowerCase()).not.toContain("já apareceu na sua faixa");
+    expect(s.toLowerCase()).toContain("abaixo do seu piso");
+    expect(s.toLowerCase()).toMatch(/barato demais|acessório/);
+  });
+
+  // Entre +0,01% e +0,49% o arredondamento dava "0% acima do seu teto", que se
+  // lê como contradição.
+  it("não imprime 0% para preço logo acima do teto", () => {
+    const s = formatCacas([{ ...base, melhorAtualCents: 330500 }]);
+    expect(s).not.toContain("0% acima");
+    expect(s.toLowerCase()).toContain("logo acima do seu teto");
   });
 
   it("lida com caça sem nenhuma oferta conhecida", () => {

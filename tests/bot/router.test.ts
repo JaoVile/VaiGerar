@@ -271,7 +271,7 @@ describe("tratar /cacas", () => {
     const [, , html] = sendMessageMock.mock.calls[0];
     expect(html).toContain("caça boa");
     expect(html).toContain("R$ 3.000,00");
-    expect(html.toLowerCase()).toContain("dentro da faixa");
+    expect(html.toLowerCase()).toContain("já apareceu na sua faixa");
     expect(html).toContain("caça ruim");
     expect(html.toLowerCase()).toContain("nenhuma oferta");
   });

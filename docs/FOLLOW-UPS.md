@@ -6,11 +6,9 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
 
 ## Precisa de ação humana
 
-- **Deploy na Vercel.** Importar `JaoVile/VaiGerar`. Variáveis: `SUPABASE_URL`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `TELEGRAM_BOT_TOKEN_OFERTAS`.
-- **Agendar no cron-job.org.** Dois jobs POST com header `x-cron-secret`:
-  `/api/cron/tick` a cada 5 min, `/api/cron/backfill` a cada 10 min.
-  **Enquanto isso não existir, nada coleta sozinho.**
+Nada pendente. Deploy, cron e migrations `0001`–`0006` aplicados; o sistema
+coleta sozinho desde 10/08. (Esta seção listava o deploy na Vercel e os dois
+jobs do cron-job.org — ambos feitos.)
 
 ## Vale corrigir quando tocar no código
 
@@ -128,27 +126,14 @@ imediata (rótulo do `/cacas`, piso ignorado na faixa, handler do botão "mais
 ofertas" sem teste, "0% acima do teto") foram corrigidos nesta mesma rodada.
 Estes cinco ficaram, com o porquê.
 
-- **A guarda `ORCAMENTO_ENTREGA_MS` é inerte com relógio real.**
-  `processarAlertas` monta os até `LOTE_ENVIO` envios com
-  `Promise.allSettled((pendentes).map(...))`: o `.map` invoca as 5 chamadas de
-  `processarUmAlerta` **sincronamente**, e `decorridoMs()` é a primeira
-  instrução da função, antes de qualquer `await`. As 5 leem, portanto, o mesmo
-  instante. Medido num tick real: `[2, 2, 2, 2, 2]` ms para uma execução de
-  **344 ms** de duração. O comportamento pretendido — "as primeiras vão, o
-  resto fica pro próximo tick" — nunca acontece; ou nenhuma é adiada (caso
-  normal), ou todas seriam.
-
-  O teste passa porque o `decorridoMs` injetado conta **chamadas**, não tempo:
-  ele documenta um mecanismo que o relógio real não produz. **Isso importa mais
-  que os outros itens desta lista:** essa guarda foi a correção de uma
-  regressão de timeout registrada logo acima neste mesmo arquivo ("Entrega
-  duplicada de alerta"), e essa regressão continua sem defesa efetiva.
-
-  Não foi corrigido agora porque o conserto não é local: exige medir o tempo
-  *entre* os inícios (fila com concorrência limitada, ou checar o orçamento
-  logo antes do `sendMessage` em vez de antes do claim) e reescrever o teste
-  para tempo real ou relógio fake — mudança de desenho no caminho crítico de
-  entrega, arriscada de emendar numa rodada de correção de review.
+- ~~**A guarda `ORCAMENTO_ENTREGA_MS` é inerte com relógio real.**~~
+  **CORRIGIDA em 12/08.** A checagem passou a acontecer dentro da fila de
+  entrega, antes de cada `sendMessage` — `filaPorChat` serializa por chat,
+  então é o único ponto do caminho onde o relógio já andou. Linha adiada
+  volta limpa, com o mesmo desfazer do 429. O teste antigo contava chamadas
+  em vez de tempo e passava com a guarda inerte; foi trocado por três, um
+  deles com `cronometro()` real e envio lento. Detalhe no item 2 do
+  `docs/PLANO-MELHORIAS.md`.
 
 - **A memoização de `statsDaCaca` não tem teste e não rende na configuração
   atual.** Remover o cache inteiro deixa os testes passando (225/225 no momento

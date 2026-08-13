@@ -58,6 +58,10 @@ describe("/ajuda cobre o que o bot aceita", () => {
     expect(ajuda).toContain("48h");
   });
 
+  it("explica o botão de menor preço agora", () => {
+    expect(ajuda).toContain("Menor preço agora");
+  });
+
   it("diz que dá pra buscar sem digitar comando", () => {
     expect(ajuda.toLowerCase()).toContain("sem comando");
   });

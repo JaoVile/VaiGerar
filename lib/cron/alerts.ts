@@ -31,7 +31,7 @@ const JANELA_POSTS = 500;
  * 48h, e não os 5 min do tick, para dar folga a atraso do agendador, deploy
  * parado ou fila represada — sem ressuscitar arquivo.
  */
-const JANELA_HORAS = 48;
+export const JANELA_HORAS = 48;
 /**
  * Folga, em ids, com que a marca d'água volta atrás a cada tick.
  *

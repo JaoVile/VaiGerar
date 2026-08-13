@@ -1,3 +1,5 @@
+import { JANELA_HORAS } from "@/lib/cron/alerts";
+import type { CacaAtual } from "@/lib/hunts/atual";
 import type { ResultadoCupons } from "@/lib/search/coupons";
 import type { Tendencia } from "@/lib/search/trend";
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
@@ -394,6 +396,53 @@ export function formatTendencia(t: Tendencia): string {
   return linhas.join("\n");
 }
 
+/**
+ * Resposta do botão "menor preço agora" do `/cacas`.
+ *
+ * Diferente do corpo do `/cacas`, que mostra o menor do arquivo de
+ * `MESES_PADRAO` meses (podendo ser oferta encerrada), aqui só entra o que
+ * está dentro da janela do alerta. Por isso a mensagem repete a janela em
+ * horas: as duas listas mostram preços diferentes de propósito, e sem o
+ * rótulo isso pareceria contradição.
+ */
+export function formatMenorAtual(cacas: CacaAtual[], agora: Date = new Date()): string {
+  if (cacas.length === 0) {
+    return "Nenhuma caça ativa. Use /cacar para criar.";
+  }
+
+  const linhas = [`💰 <b>Menor preço agora</b> — ofertas das últimas ${JANELA_HORAS}h`, ""];
+  for (const c of cacas) {
+    linhas.push(`🎯 <b>${escapeHtml(c.label)}</b>`);
+    if (c.achado === null) {
+      linhas.push(
+        `   <i>nada na sua faixa (${formatBRL(c.priceMinCents)} a ${formatBRL(c.priceMaxCents)}) nestas ${JANELA_HORAS}h</i>`,
+      );
+    } else {
+      const a = c.achado;
+      const loja = a.store ? ` · ${escapeHtml(a.store)}` : "";
+      const horas = Math.max(
+        0,
+        Math.floor((agora.getTime() - new Date(a.postedAt).getTime()) / 3_600_000),
+      );
+      const quando = horas === 0 ? "agora há pouco" : `há ${horas}h`;
+      linhas.push(
+        `   <b>${formatBRL(a.priceCents)}</b>${loja} · ${quando}`,
+        `   ${escapeHtml(tituloDoPost(a.text, 60))}`,
+      );
+      if (a.productUrl) {
+        linhas.push(`   <a href="${escapeHtml(a.productUrl)}">ir para a oferta</a>`);
+      }
+      linhas.push(`   <a href="${escapeHtml(a.url)}">ver post</a>`);
+    }
+    linhas.push("");
+  }
+
+  linhas.push(
+    `<i>Mesma janela e mesmo critério do alerta: o que aparece aqui é o que eu te avisaria. Se está em branco, é porque não apareceu nada na faixa nestas ${JANELA_HORAS}h — não é falha.</i>`,
+  );
+  return linhas.join("\n");
+}
+
 export type CacaResumo = {
   label: string;
   priceMinCents: number;
@@ -530,6 +579,10 @@ export function formatAjuda(): string {
     "Os canais publicam o código, nunca a validade — por isso mostro há quantos dias cada um saiu.",
     "",
     "/cacas — lista suas caças, com botão de excluir",
+    "",
+    "No /cacas tem o botão <b>💰 Menor preço agora</b>: ele mostra, de cada caça, a oferta mais barata que está <b>de pé neste momento</b>.",
+    `<i>A lista do /cacas usa o arquivo de ${MESES_PADRAO} meses e pode trazer promoção já encerrada. O botão usa a mesma janela de ${JANELA_HORAS}h do alerta — o que aparece nele é o que eu te avisaria.</i>`,
+    "",
     "/ajuda — esta mensagem",
     "",
     "<i>Também respondo a /cupons, /tendência e /start.</i>",

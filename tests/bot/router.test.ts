@@ -180,8 +180,28 @@ describe("tratar /cacas", () => {
     expect(html).not.toContain("<50");
     // O texto do botão NÃO é parseado como HTML pelo Telegram — escapar ali
     // mostraria "&lt;" literal para o usuário. Fica cru de propósito.
+    // Procurado por conteúdo, não por posição: a linha 0 do teclado passou a
+    // ser o botão "menor preço agora", e assertar por índice fazia este teste
+    // quebrar por um motivo que não tem nada a ver com o que ele verifica.
     const [, , , opts] = sendMessageMock.mock.calls[0];
-    expect(opts.keyboard.inline_keyboard[0][0].text).toBe("Excluir tv <50 & cia");
+    const botoes = opts.keyboard.inline_keyboard.flat() as Array<{
+      text: string;
+      callback_data: string;
+    }>;
+    const excluir = botoes.find((b) => b.callback_data.startsWith("del:"));
+    expect(excluir?.text).toBe("Excluir tv <50 & cia");
+  });
+
+  it("oferece o botão de menor preço agora", async () => {
+    await tratar(dbComHunts([hunt("Galaxy S25")]), "tok", {
+      chatId: 7,
+      texto: "/cacas",
+    });
+    const [, , , opts] = sendMessageMock.mock.calls[0];
+    const botoes = opts.keyboard.inline_keyboard.flat() as Array<{
+      callback_data: string;
+    }>;
+    expect(botoes.some((b) => b.callback_data === "min:agora")).toBe(true);
   });
 
   it("avisa quando não há nenhuma caça ativa", async () => {

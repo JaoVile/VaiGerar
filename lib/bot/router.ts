@@ -5,10 +5,12 @@ import {
   formatAjuda,
   formatCacas,
   formatCupons,
+  formatMenorAtual,
   formatTendencia,
   formatSearchPagina,
 } from "@/lib/bot/format";
 import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
+import { menorAtualPorCaca } from "@/lib/hunts/atual";
 import { FLOW_BUSCA, FLOW_CACA, lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
 import { buscarCupons } from "@/lib/search/coupons";
 import { buscar } from "@/lib/search/query";
@@ -133,6 +135,15 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
     return;
   }
 
+  if (texto === "min:agora") {
+    // Mensagem nova em vez de `editMessageText`: o /cacas de origem tem os
+    // botões de excluir, e substituir o texto dele apagaria a única forma de
+    // apagar uma caça. Além disso as duas respostas são leituras diferentes e
+    // faz sentido poder comparar as duas na tela.
+    await sendMessage(token, chatId, formatMenorAtual(await menorAtualPorCaca(db, chatId)));
+    return;
+  }
+
   if (texto.startsWith("pag:")) {
     const offsetPedido = Number(texto.slice(4));
     const offset = Number.isFinite(offsetPedido) ? offsetPedido : 0;
@@ -198,14 +209,20 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
     );
     await sendMessage(token, chatId, formatCacas(itens), {
       keyboard: {
-        inline_keyboard: hs.map((h) => [
-          // `label` é texto do usuário: um produto como "tv <50 polegadas" faz o
-          // Telegram recusar a mensagem inteira ("can't parse entities") — e como
-          // o botão de excluir vive DENTRO desta mensagem, /cacas ficaria travado
-          // para sempre, sem jeito de apagar a caça que o trava. O texto do
-          // botão fica cru de propósito (não é parseado como HTML).
-          { text: `Excluir ${h.label}`, callback_data: `del:${h.id}` },
-        ]),
+        inline_keyboard: [
+          // Primeira linha: o menor preço que está de pé AGORA, que é outra
+          // pergunta da que o corpo do /cacas responde (menor do arquivo de
+          // MESES_PADRAO meses, possivelmente encerrado).
+          [{ text: "💰 Menor preço agora", callback_data: "min:agora" }],
+          ...hs.map((h) => [
+            // `label` é texto do usuário: um produto como "tv <50 polegadas" faz o
+            // Telegram recusar a mensagem inteira ("can't parse entities") — e como
+            // o botão de excluir vive DENTRO desta mensagem, /cacas ficaria travado
+            // para sempre, sem jeito de apagar a caça que o trava. O texto do
+            // botão fica cru de propósito (não é parseado como HTML).
+            { text: `Excluir ${h.label}`, callback_data: `del:${h.id}` },
+          ]),
+        ],
       },
     });
     return;

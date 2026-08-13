@@ -132,18 +132,37 @@ jobs do cron-job.org — ambos feitos.)
   tick. Ao mexer: corrigir o fake para respeitar o `eq` antes de escrever o
   teste, senão ele nasce testando o acidente.
 
-- **O post que dispara o alerta nunca passa pelo piso de 25%.** `aplicarPiso`
-  (`lib/search/stats.ts`, `PISO_FRACAO = 0.25`) filtra o **conjunto da
-  estatística** dentro de `buscar`; o post que vira alerta vem de `casa()`
-  (`lib/hunts/match.ts`), que só olha a faixa da caça e os termos. Efeito: um
-  post muito abaixo da mediana pode alertar dizendo "83% abaixo da mediana"
-  enquanto o `/agora` do mesmo termo esconde esse mesmo post por considerá-lo
-  acessório. Duas leituras do mesmo dado, com critérios diferentes.
+- ~~**O post que dispara o alerta nunca passa pelo piso de 25%.**~~
+  **AVALIADO em 12/08 e DESCARTADO — corrigir deixaria o alerta pior.**
 
-  Não corrigido agora porque o piso da caça (`priceMinCents`) já cobre o caso
-  comum e aplicar o piso relativo também no alerta muda *quais alertas saem* —
-  é mudança de comportamento do motor, não de texto, e merece decisão
-  deliberada em vez de carona numa rodada de review.
+  Medido nas 6 caças reais, comparando o piso da própria caça com 25% da
+  mediana de mercado do termo:
+
+  | caça | piso da caça | piso de 25% |
+  |---|---:|---:|
+  | Galaxy S24 Ultra | R$ 2.970,00 | R$ 1.024,75 |
+  | Galaxy S25 | R$ 2.340,00 | R$ 861,03 |
+  | Galaxy S25 Edge | R$ 2.790,00 | R$ 959,75 |
+  | Galaxy S25 Plus | R$ 2.700,00 | R$ 999,75 |
+  | Galaxy S26 | R$ 2.610,00 | R$ 903,11 |
+  | Galaxy S26 Plus | R$ 2.970,00 | R$ 1.138,38 |
+
+  Em todas, **o piso da caça é 2,5 a 3 vezes mais rígido**. Aplicar o piso
+  relativo não mudaria alerta nenhum.
+
+  E quando mudaria, mudaria para pior. O piso de 25% existe porque a **busca**
+  não tem faixa: quem digita "mesa" não disse quanto quer pagar, então precisa
+  de heurística pra separar produto de acessório. O **alerta** tem faixa — o
+  usuário disse "entre R$ 2.340 e R$ 2.860". Essa faixa *é* o filtro.
+
+  O piso relativo só passaria à frente se a caça tivesse alvo abaixo de ~29% do
+  preço de mercado. Nesse caso ele suprimiria justamente o alerta que o usuário
+  mais quer ver: um aparelho de R$ 3.400 aparecendo por R$ 800 é erro de
+  anúncio ou promoção histórica — e o sistema existe pra avisar disso.
+
+  **A "inconsistência" entre as duas leituras é proposital**, não descuido: são
+  perguntas diferentes. A busca ordena um conjunto sem critério do usuário; o
+  alerta responde a um critério que o usuário escreveu.
 
 - **`buscar` puxa a coluna `text` para chamadores que só querem preço.** O
   `select` é `text,price_cents,store,posted_at,url` sobre até `TETO_LINHAS =

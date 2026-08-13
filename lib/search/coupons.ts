@@ -15,6 +15,20 @@ import { type Cupom, extrairCupons } from "@/lib/parse/coupon";
  */
 export const DIAS_PADRAO = 3;
 
+/**
+ * Janela quando o usuário também diz o produto (`/cupom mercadolivre ducha`).
+ *
+ * Maior que a padrão de propósito. Filtrar por produto corta muito: medido em
+ * 13/08, "mercadolivre + ducha" rende **1 cupom em 3 dias**, e "amazon +
+ * monitor" sai de 2 para 22 ao abrir para 7 dias. Numa consulta ampla a janela
+ * curta protege a lista de virar rolo; numa consulta específica ela só
+ * devolve vazio.
+ *
+ * O risco de mostrar cupom mais velho é o mesmo de sempre, e a mensagem já o
+ * trata: cada linha diz há quantos dias saiu.
+ */
+export const DIAS_COM_PRODUTO = 7;
+
 /** Teto de linhas lidas por consulta, no mesmo espírito de `lib/search/query.ts`. */
 const TETO_LINHAS = 1500;
 
@@ -26,6 +40,8 @@ export type CupomAchado = Cupom & {
 
 export type ResultadoCupons = {
   loja: string | null;
+  /** Produto pedido junto da loja, quando houver. */
+  produto: string | null;
   dias: number;
   cupons: CupomAchado[];
 };
@@ -54,6 +70,41 @@ const APELIDOS: Record<string, string> = {
   casasbahia: "casasbahia",
 };
 
+/**
+ * Separa "mercado livre ducha" em loja e produto.
+ *
+ * Corta no **maior prefixo que seja uma loja conhecida**, e não no primeiro
+ * espaço: várias lojas têm nome de duas palavras ("mercado livre", "magazine
+ * luiza", "casas bahia"), e cortar no primeiro espaço transformaria a loja em
+ * produto.
+ *
+ * Se nenhum prefixo for loja conhecida, a entrada inteira continua sendo
+ * tratada como loja — é o comportamento antigo, e mantém `/cupom lojinha do
+ * zé` respondendo "não achei cupom da lojinha do zé" em vez de inventar que
+ * "do zé" é um produto.
+ */
+export function separarLojaProduto(entrada: string): {
+  loja: string;
+  produto: string | null;
+} {
+  const partes = entrada.trim().split(/\s+/).filter(Boolean);
+  for (let corte = partes.length; corte > 0; corte--) {
+    const candidata = partes.slice(0, corte).join(" ");
+    if (APELIDOS[chaveDeLoja(candidata)] === undefined) continue;
+    const resto = partes.slice(corte).join(" ");
+    return { loja: candidata, produto: resto.length > 0 ? resto : null };
+  }
+  return { loja: entrada.trim(), produto: null };
+}
+
+function chaveDeLoja(entrada: string): string {
+  return entrada
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export function normalizarLoja(entrada: string): string | null {
   const chave = entrada
     .trim()
@@ -66,10 +117,11 @@ export function normalizarLoja(entrada: string): string | null {
 
 export async function buscarCupons(
   db: SupabaseClient,
-  lojaEntrada: string,
+  entrada: string,
   opts: { dias?: number } = {},
 ): Promise<ResultadoCupons> {
-  const dias = opts.dias ?? DIAS_PADRAO;
+  const { loja: lojaEntrada, produto } = separarLojaProduto(entrada);
+  const dias = opts.dias ?? (produto ? DIAS_COM_PRODUTO : DIAS_PADRAO);
   const loja = normalizarLoja(lojaEntrada);
   const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
 
@@ -79,6 +131,12 @@ export async function buscarCupons(
     .gte("posted_at", desde)
     .limit(TETO_LINHAS);
   if (loja) q = q.eq("store", loja);
+  // Full-text e não `casaTermo`: aqui o alvo é o POST que carrega o cupom, e
+  // o cupom raramente cita o produto do jeito exato que o usuário digitou.
+  // Ser mais generoso é o certo — a lista já está apertada pela loja.
+  if (produto) {
+    q = q.textSearch("search_vector", produto, { type: "plain", config: "portuguese" });
+  }
 
   const { data, error } = await q;
   if (error) throw new Error(`Buscando cupons de "${lojaEntrada}": ${error.message}`);
@@ -108,5 +166,5 @@ export async function buscarCupons(
   }
 
   const cupons = [...porCodigo.values()].sort((a, b) => b.postedAt.localeCompare(a.postedAt));
-  return { loja, dias, cupons };
+  return { loja, produto, dias, cupons };
 }

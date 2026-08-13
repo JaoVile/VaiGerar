@@ -267,7 +267,20 @@ const RODAPE_CUPONS =
 
 export function formatCupons(r: ResultadoCupons, agora: Date = new Date()): string {
   const alvo = r.loja ? nomeLoja(r.loja) : "todas as lojas";
+  const comProduto = r.produto ? ` · <b>${escapeHtml(r.produto)}</b>` : "";
+
   if (r.cupons.length === 0) {
+    if (r.produto) {
+      // Duas causas possíveis, e a saída é diferente pra cada uma: pode não
+      // haver cupom desse produto, ou o produto pode nem ter sido anunciado
+      // naquela loja. Sugerir a busca sem produto resolve as duas sem eu ter
+      // que adivinhar qual foi.
+      return [
+        `Não achei cupom de <b>${escapeHtml(r.produto)}</b> na <b>${escapeHtml(alvo)}</b> nos últimos ${r.dias} dias.`,
+        "",
+        `Tente <code>/cupom ${escapeHtml(r.loja ?? alvo)}</code> sem o produto — muito cupom vale para a loja inteira e não cita item nenhum.`,
+      ].join("\n");
+    }
     return [
       `Não achei cupom de <b>${escapeHtml(alvo)}</b> nos últimos ${r.dias} dias.`,
       "",
@@ -276,9 +289,17 @@ export function formatCupons(r: ResultadoCupons, agora: Date = new Date()): stri
   }
 
   const linhas = [
-    `🎟 <b>${escapeHtml(alvo)}</b> — ${r.cupons.length} cupons dos últimos ${r.dias} dias`,
-    "",
+    `🎟 <b>${escapeHtml(alvo)}</b>${comProduto} — ${r.cupons.length} cupons dos últimos ${r.dias} dias`,
   ];
+  if (r.produto) {
+    // Sem esta linha o usuário lê "cupom de ducha" e supõe que o código só
+    // vale pra ducha. O que o dado sustenta é mais fraco: o código apareceu
+    // num post que falava de ducha.
+    linhas.push(
+      `<i>Cupons que apareceram em anúncios de ${escapeHtml(r.produto)} — o código costuma valer para mais coisa que só isso.</i>`,
+    );
+  }
+  linhas.push("");
   for (const c of r.cupons) {
     // Linha 1: o que o cupom DÁ. Sem o teto, "25% OFF" num carrinho de
     // R$ 2.000 parece R$ 500 de desconto quando o limite real é R$ 60 — é o
@@ -658,6 +679,13 @@ export function formatAjuda(): string {
     "<code>/cupom amazon</code>",
     "<code>/cupom mercado livre</code>",
     "<code>/cupom magalu</code>",
+    "",
+    "/cupom &lt;loja&gt; &lt;produto&gt; — só os cupons que apareceram em anúncios daquele produto:",
+    "",
+    "<code>/cupom mercado livre ducha</code>",
+    "<code>/cupom amazon notebook</code>",
+    "",
+    "<i>Com produto eu olho 7 dias em vez de 3 — filtrar por item corta demais, e uma semana é o que faz a lista deixar de vir vazia.</i>",
     "",
     "Entendo apelido: <code>ml</code>, <code>meli</code>, <code>magazine luiza</code>.",
     "Os canais publicam o código, nunca a validade — por isso mostro há quantos dias cada um saiu.",

@@ -115,6 +115,9 @@ describe("formatCupons", () => {
             codigo: "APROVEITAESSA",
             descontoTexto: null,
             pisoCents: null,
+            tetoCents: null,
+            beneficios: [],
+            restricoes: [],
             store: "amazon",
             postedAt: "2026-08-12T10:00:00Z",
             url: "https://t.me/x/1",
@@ -133,6 +136,9 @@ describe("formatCupons", () => {
     const base = {
       descontoTexto: null,
       pisoCents: null,
+      tetoCents: null,
+      beneficios: [],
+      restricoes: [],
       store: "amazon",
       url: "https://t.me/x/1",
     };
@@ -164,6 +170,9 @@ describe("formatCupons", () => {
             codigo: "NOTE400",
             descontoTexto: "R$400 OFF",
             pisoCents: 20000,
+            tetoCents: null,
+            beneficios: [],
+            restricoes: [],
             store: "amazon",
             postedAt: "2026-08-12T09:00:00Z",
             url: "https://t.me/x/1",
@@ -180,5 +189,52 @@ describe("formatCupons", () => {
     const s = formatCupons({ loja: "lojinha", dias: 3, cupons: [] }, agora);
     expect(s).toContain("amazon");
     expect(s).toContain("mercado livre");
+  });
+});
+
+describe("formatCupons — benefício e restrição", () => {
+  const agora = new Date("2026-08-12T12:00:00Z");
+  const base = {
+    codigo: "MARCOU",
+    store: "mercadolivre",
+    postedAt: "2026-08-12T09:00:00Z",
+    url: "https://t.me/x/1",
+    descontoTexto: null as string | null,
+    pisoCents: null as number | null,
+    tetoCents: null as number | null,
+    beneficios: [] as string[],
+    restricoes: [] as string[],
+  };
+  const render = (over: Partial<typeof base>) =>
+    formatCupons({ loja: "mercadolivre", dias: 3, cupons: [{ ...base, ...over }] }, agora);
+
+  // Post real: "10% OFF em compras acima de R$129, limite de R$40".
+  it("separa o que o cupom dá do que ele exige", () => {
+    const s = render({ descontoTexto: "10%", pisoCents: 12900, tetoCents: 4000 });
+    expect(s).toContain("no máximo R$ 40,00");
+    expect(s).toContain("compra acima de R$ 129,00");
+  });
+
+  it("mostra as restrições do post", () => {
+    const s = render({ restricoes: ["1 uso por CPF", "itens selecionados"] });
+    expect(s).toContain("1 uso por CPF");
+    expect(s).toContain("itens selecionados");
+  });
+
+  it("frete grátis aparece como ganho, não como exigência", () => {
+    const s = render({ beneficios: ["frete grátis"] });
+    const linha = s.split("\n").find((l) => l.includes("frete grátis")) ?? "";
+    expect(linha).toContain("MARCOU");
+    expect(linha).not.toContain("⚠️");
+  });
+
+  // Medido: ~80% dos posts com cupom só trazem o código. Sem esta linha o
+  // usuário supõe "sem restrição" e toma recusa no caixa.
+  it("cupom sem nenhuma regra declarada avisa que o post não diz", () => {
+    expect(render({}).toLowerCase()).toContain("não diz as regras");
+  });
+
+  it("cupom com regra não recebe o aviso de post omisso", () => {
+    expect(render({ pisoCents: 12900 }).toLowerCase()).not.toContain("não diz as regras");
   });
 });

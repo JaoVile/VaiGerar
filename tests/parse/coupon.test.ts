@@ -9,7 +9,14 @@ describe("extrairCupons", () => {
   //   "código: X"            1
   it("pega o formato dominante — cupom com dois-pontos", () => {
     expect(extrairCupons("🎟️Use o cupom: APROVEITAESSA")).toEqual([
-      { codigo: "APROVEITAESSA", descontoTexto: null, pisoCents: null },
+      {
+        codigo: "APROVEITAESSA",
+        descontoTexto: null,
+        pisoCents: null,
+        tetoCents: null,
+        beneficios: [],
+        restricoes: [],
+      },
     ]);
   });
 
@@ -92,5 +99,166 @@ describe("extrairCupons", () => {
     const c = extrairCupons("Cupom: SEMPREMODA")[0];
     expect(c.descontoTexto).toBeNull();
     expect(c.pisoCents).toBeNull();
+  });
+});
+
+describe("extrairCupons — benefício e restrições", () => {
+  // Todas as strings abaixo saíram do arquivo real em 12/08. A medição sobre
+  // 2.700 posts com cupom mostrou que **~80% só trazem o código**, sem dizer
+  // regra nenhuma — por isso todo campo aqui é opcional e a mensagem tem que
+  // ficar boa sem eles:
+  //
+  //   desconto em %            9%      teto "limitado a R$"      4%
+  //   valor do desconto R$     7%      piso "em compras de"      3%
+  //   piso "acima/a partir"    8%      frete grátis              2%
+  //   1 uso por CPF            1%      itens selecionados        1%
+  const um = (t: string) => extrairCupons(t)[0];
+
+  it("piso: 'em compras acima de R$129'", () => {
+    expect(um("Mercado Livre 10% OFF em compras acima de R$129 cupom: MARCOU").pisoCents).toBe(
+      12900,
+    );
+  });
+
+  it("piso: 'a partir de R$ 200'", () => {
+    expect(um("Ganhe 10% off em compras a partir de R$ 200 cupom: BRASILHOJE").pisoCents).toBe(
+      20000,
+    );
+  });
+
+  it("piso: 'ACIMA DE R$200' sem a palavra compras", () => {
+    expect(um("👉10% OFF ACIMA DE R$200 🎟 SEUMOMENTO").pisoCents).toBe(20000);
+  });
+
+  it("piso com milhar: 'a partir de R$ 999'", () => {
+    expect(um("R$ 100 off em compras a partir de R$ 999 cupom: CHEGOUPRIME").pisoCents).toBe(99900);
+  });
+
+  // O ponto é separador de MILHAR em pt-BR, a vírgula é o decimal. Trocar os
+  // papéis transforma R$ 1.299 em R$ 1,29 — erro de 100x num piso de compra,
+  // que faria o cupom parecer utilizável em qualquer carrinho. O teste acima
+  // não pegava isso: "R$ 999" não tem separador nenhum.
+  it("piso com separador de milhar de verdade: 'a partir de R$ 1.299'", () => {
+    expect(um("15% off a partir de R$ 1.299 cupom: MILHAR1").pisoCents).toBe(129900);
+  });
+
+  it("piso com centavos: 'acima de R$ 99,90'", () => {
+    expect(um("10% off acima de R$ 99,90 cupom: CENT123").pisoCents).toBe(9990);
+  });
+
+  // Sem este caso, uma regex de piso que aceitasse "limite de" passava
+  // despercebida: no post que tem os dois, "acima de" vem primeiro e o `exec`
+  // devolve o certo por acidente de ordem. Descoberto por mutação.
+  it("post que só tem teto não ganha piso inventado", () => {
+    const c = um("25% OFF com limite de R$ 60 de desconto cupom: SOTETO1");
+    expect(c.tetoCents).toBe(6000);
+    expect(c.pisoCents).toBeNull();
+  });
+
+  // O teto é o que separa "10% de desconto" de "10% até no máximo R$40". Sem
+  // ele o usuário faz a conta errada num carrinho grande.
+  it("teto: 'limite de R$40'", () => {
+    expect(um("10% OFF em compras acima de R$129, limite de R$40 cupom: MARCOU").tetoCents).toBe(
+      4000,
+    );
+  });
+
+  it("teto: '(limitado a R$ 50)'", () => {
+    expect(um("10% off a partir de R$ 200 (limitado a R$ 50) cupom: BRASILHOJE").tetoCents).toBe(
+      5000,
+    );
+  });
+
+  it("teto: 'limite de R$ 60 de desconto'", () => {
+    expect(um("🎟 CUPOMPRAMOVEIS 25% OFF com limite de R$ 60 de desconto").tetoCents).toBe(6000);
+  });
+
+  it("piso e teto no mesmo post não se confundem", () => {
+    const c = um("10% OFF em compras acima de R$129, limite de R$40 cupom: MARCOU");
+    expect(c.pisoCents).toBe(12900);
+    expect(c.tetoCents).toBe(4000);
+  });
+
+  it("restrição: 1 utilização por CPF", () => {
+    expect(
+      um("cupom: ALOCUPOM (Válido para 1 utilização por CPF em itens selecionados)").restricoes,
+    ).toContain("1 uso por CPF");
+  });
+
+  it("restrição: itens selecionados", () => {
+    expect(um("cupom: MAGALUCHEGOU (Válido em itens selecionados)").restricoes).toContain(
+      "itens selecionados",
+    );
+  });
+
+  it("restrição: exclusivo para assinante", () => {
+    expect(
+      um("cupom TORCER15 (Exclusivo para membros Prime. Válido em itens selecionados)").restricoes,
+    ).toContain("só assinante Prime");
+  });
+
+  // "Placa Mãe Asus Prime A520m" aparece no arquivo e não é restrição nenhuma
+  // — a palavra prime é nome de produto. Precisa do contexto de assinatura.
+  it("Prime no nome do produto não vira restrição", () => {
+    expect(um("🔥Placa Mãe Asus Prime A520m-r Am4 cupom: TECHEMCASA").restricoes).toEqual([]);
+  });
+
+  it("benefício: frete grátis entra como vantagem, não restrição", () => {
+    const c = um("cupom: FRETEZERO com Frete Grátis para todo o Brasil");
+    expect(c.beneficios).toContain("frete grátis");
+    expect(c.restricoes).not.toContain("frete grátis");
+  });
+
+  it("post que só traz o código deixa tudo vazio, sem inventar", () => {
+    const c = um("🎟️Use o cupom: APROVEITAESSA");
+    expect(c.pisoCents).toBeNull();
+    expect(c.tetoCents).toBeNull();
+    expect(c.restricoes).toEqual([]);
+    expect(c.beneficios).toEqual([]);
+  });
+
+  it("não repete a mesma restrição quando o post a menciona duas vezes", () => {
+    const c = um("cupom: X1Y2 válido em itens selecionados, apenas itens selecionados");
+    expect(c.restricoes.filter((r) => r === "itens selecionados")).toHaveLength(1);
+  });
+});
+
+describe("extrairCupons — regra é do cupom, não do produto", () => {
+  // A maioria dos posts é anúncio de PRODUTO que por acaso carrega um cupom.
+  // Sem limitar o raio, o "Frete Grátis" e o "assinantes Meli+" do anúncio
+  // eram creditados ao código: a primeira renderização real do /cupom saiu com
+  // "APROVEITAESSA — frete grátis", que é propaganda do produto.
+  //
+  // Medido nos posts de 3 dias de Amazon e ML: post inteiro dá 254
+  // atribuições, ±120 caracteres dá 131 — metade não tinha relação.
+  it("frete grátis do produto, longe do código, não vira benefício do cupom", () => {
+    const t = [
+      "🎧 Fone de ouvido Anker Soundcore",
+      "📦 Frete Grátis para todo o Brasil",
+      "Vendido e entregue por Amazon, chega em 2 dias, garantia de 1 ano",
+      "Produto original com nota fiscal e 30 dias para troca sem custo nenhum",
+      "Avaliação 4,8 estrelas com mais de doze mil compradores satisfeitos",
+      "Use o cupom: LONGE123",
+    ].join("\n");
+    expect(extrairCupons(t)[0].beneficios).toEqual([]);
+  });
+
+  it("frete grátis colado no código continua valendo", () => {
+    expect(extrairCupons("Use o cupom: PERTO123 e ganhe Frete Grátis")[0].beneficios).toEqual([
+      "frete grátis",
+    ]);
+  });
+
+  it("cada código de um post lê a sua própria vizinhança", () => {
+    const t = [
+      "Cupom: PRIMEIRO com 10% OFF acima de R$ 200",
+      "".padEnd(200, "x"),
+      "Cupom: SEGUNDO válido para 1 utilização por CPF",
+    ].join("\n");
+    const [a, b] = extrairCupons(t);
+    expect(a.pisoCents).toBe(20000);
+    expect(a.restricoes).toEqual([]);
+    expect(b.pisoCents).toBeNull();
+    expect(b.restricoes).toContain("1 uso por CPF");
   });
 });

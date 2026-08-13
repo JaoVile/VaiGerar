@@ -279,14 +279,32 @@ export function formatCupons(r: ResultadoCupons, agora: Date = new Date()): stri
     "",
   ];
   for (const c of r.cupons) {
-    const extras: string[] = [];
-    if (c.descontoTexto) extras.push(escapeHtml(c.descontoTexto));
-    if (c.pisoCents !== null) extras.push(`acima de ${formatBRL(c.pisoCents)}`);
-    if (!r.loja) extras.push(nomeLoja(c.store));
-    const detalhe = extras.length > 0 ? ` — ${extras.join(" · ")}` : "";
+    // Linha 1: o que o cupom DÁ. Sem o teto, "25% OFF" num carrinho de
+    // R$ 2.000 parece R$ 500 de desconto quando o limite real é R$ 60 — é o
+    // dado que mais muda a decisão de usar ou não.
+    const ganho: string[] = [];
+    if (c.descontoTexto) ganho.push(`<b>${escapeHtml(c.descontoTexto)}</b>`);
+    if (c.tetoCents !== null) ganho.push(`no máximo ${formatBRL(c.tetoCents)}`);
+    for (const b of c.beneficios) ganho.push(escapeHtml(b));
+    if (!r.loja) ganho.push(nomeLoja(c.store));
+
+    // Linha 2: o que o cupom EXIGE.
+    const exige: string[] = [];
+    if (c.pisoCents !== null) exige.push(`compra acima de ${formatBRL(c.pisoCents)}`);
+    for (const x of c.restricoes) exige.push(escapeHtml(x));
+
     linhas.push(
-      `<code>${escapeHtml(c.codigo)}</code>${detalhe}`,
-      `<i>${idadeEmDias(c.postedAt, agora)}</i> · <a href="${escapeHtml(c.url)}">ver post</a>`,
+      `<code>${escapeHtml(c.codigo)}</code>${ganho.length ? ` — ${ganho.join(" · ")}` : ""}`,
+    );
+    if (exige.length > 0) linhas.push(`   ⚠️ ${exige.join(" · ")}`);
+    // Medido em 12/08: ~80% dos posts com cupom só trazem o código. Dizer isso
+    // é melhor que deixar a linha nua e o usuário supor que não há regra —
+    // supor "sem restrição" e tomar recusa no caixa é o pior desfecho.
+    if (ganho.length === 0 && exige.length === 0) {
+      linhas.push("   <i>o post não diz as regras — confira no link</i>");
+    }
+    linhas.push(
+      `   <i>${idadeEmDias(c.postedAt, agora)}</i> · <a href="${escapeHtml(c.url)}">ver post</a>`,
       "",
     );
   }
@@ -577,6 +595,8 @@ export function formatAjuda(): string {
     "",
     "Entendo apelido: <code>ml</code>, <code>meli</code>, <code>magazine luiza</code>.",
     "Os canais publicam o código, nunca a validade — por isso mostro há quantos dias cada um saiu.",
+    "Quando o post declara, mostro também o desconto, o <b>teto</b> dele e as restrições (compra mínima, 1 uso por CPF, itens selecionados, só assinante).",
+    "<i>Quando não declara, eu digo isso em vez de deixar você supor que não tem regra.</i>",
     "",
     "/cacas — lista suas caças, com botão de excluir",
     "",

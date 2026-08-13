@@ -135,3 +135,71 @@ describe("parsePrices — cupom não é preço", () => {
     expect(parsePrices("use o código e ganhe R$ 40. Por R$ 899,00").priceCents).toBe(89900);
   });
 });
+
+describe("parsePrices — post que é lista de cupom não tem preço", () => {
+  // Itens 3 e 4 do FOLLOW-UPS. Todos os textos abaixo são reais e, antes desta
+  // rodada, viravam preço de produto — e portanto entravam na mediana, que é a
+  // régua que o sistema inteiro usa pra dizer se um preço é bom.
+  //
+  // Medido sobre 10.000 posts do arquivo: o preço muda em 478 (4,8%), sendo
+  // 386 que passam a não ter preço nenhum. Sobram ~22 posts (0,22%) de cauda
+  // longa, com formatos únicos — registrados em docs/FOLLOW-UPS.md.
+  const preco = (t: string) => parsePrices(t).priceCents;
+
+  it("piso de compra depois de desconto não é preço", () => {
+    expect(preco("CUPONS MERCADO LIVRE 18% de desconto em R$29 (Limitado R$500)")).toBeNull();
+    expect(preco("🎟 R$15 de desconto em R$75 Utilize na sacola")).toBeNull();
+    expect(
+      preco("🔥 CUPOM AMAZON 10% off em compras a partir de R$ 200 (limitado a R$40)"),
+    ).toBeNull();
+  });
+
+  it("teto do desconto não é preço, em todas as formas do arquivo", () => {
+    expect(preco("20% de desconto em R$39 (Limite de R$50)")).toBeNull();
+    expect(preco("🏷 10% OFF em R$ 200, máx de R$ 40 OFF")).toBeNull();
+    expect(preco("Cupom 10% OFF Acima de R$79 (Lim. R$100) no Mercado Livre")).toBeNull();
+    expect(preco("🎟 10% OFF até R$ 2500: DIATV10")).toBeNull();
+  });
+
+  it("valor somado no checkout não é preço", () => {
+    expect(preco("🎟 BRASILPRIME + R$200 na finalização")).toBeNull();
+    expect(preco("Cupom BRASIL10 + R$50 de desconto na finalização da compra")).toBeNull();
+  });
+
+  // O piso costuma aparecer longe do "% OFF", fora da janela de contexto —
+  // "10% OFF no Mercado Livre (Lim. R$ 100) | Compras acima de R$399". Por isso
+  // "compras acima de" vale sozinho.
+  it("'Compras acima de R$X' vale como piso mesmo longe do desconto", () => {
+    const t = "[Oferta Relâmpago] 10% OFF no Mercado Livre (Lim. R$ 100) | Compras acima de R$399";
+    expect(preco(t)).toBeNull();
+  });
+
+  // A rede de segurança existe pra uma palavra solta não apagar o preço de um
+  // post legítimo. Ela continua valendo — só não protege mais o valor que uma
+  // FRASE INTEIRA já disse não ser preço.
+  // Este é o caso que a condição da rede de segurança de fato protege, e a
+  // primeira versão dos testes não cobria: um valor cai no descarte FRACO
+  // ("R$ 10 OFF") e o outro no FORTE ("OFF em R$ 40"). Sem a condição, a rede
+  // devolveria o R$ 10 — o pior dos dois para a mediana, por ser o menor.
+  // Descoberto por mutação: trocar a condição por `false` mantinha tudo verde.
+  it("valor fraco não sobrevive quando o outro caiu no descarte forte", () => {
+    expect(preco("🔠 NOVO CUPOM SHOPEE! R$ 10 OFF em R$ 40 - Cupom: SHOPEE10")).toBeNull();
+  });
+
+  it("post de produto com cupom mantém o preço do produto", () => {
+    expect(preco("Air Fryer Mondial 5L por R$ 299,00 cupom: TECH10")).toBe(29900);
+    expect(preco("Aplique o cupom R$ 30 OFF — Notebook por R$ 2.499,00")).toBe(249900);
+  });
+
+  it("rede de segurança segue de pé quando o descarte é só fraco", () => {
+    // Único valor do post, marcado como cupom. Sem a rede viraria "sem preço".
+    expect(preco("Aplique o cupom R$ 30 OFF na sacola")).toBe(3000);
+  });
+
+  // Ganho não previsto: o piso de compra era MENOR que o produto, e como o
+  // preço escolhido é o mínimo, ele vencia. Um notebook de R$ 3.394 estava
+  // arquivado como R$ 200.
+  it("piso de compra não rouba o lugar do preço do produto", () => {
+    expect(preco("Notebook R$ 2.499,00 · 10% off acima de R$ 200")).toBe(249900);
+  });
+});

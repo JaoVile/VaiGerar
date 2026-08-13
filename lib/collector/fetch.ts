@@ -1,5 +1,12 @@
-const USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
+/**
+ * Identificador próprio, com forma de contato.
+ *
+ * Era uma string de Chrome. Tecnicamente dava no mesmo — `t.me/robots.txt`
+ * devolve 404, então não há diretiva sendo desobedecida —, mas fingir ser um
+ * navegador tira do outro lado a chance de identificar e falar com quem está
+ * lendo. Se um dia o Telegram quiser limitar ou avisar, agora tem como.
+ */
+const USER_AGENT = "cacador-ofertas/1.0 (+https://github.com/JaoVile/VaiGerar)";
 const TIMEOUT_MS = 15_000;
 
 export function channelPageUrl(slug: string, before?: number): string {

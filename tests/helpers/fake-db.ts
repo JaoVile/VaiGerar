@@ -18,6 +18,7 @@ type QueryResult<T> = { data: T; error: { message: string } | null };
 type QueryBox<T> = Promise<QueryResult<T>> & {
   eq: (column: string, value: unknown) => QueryBox<T>;
   lt: (column: string, value: unknown) => QueryBox<T>;
+  select: (colunas?: string) => QueryBox<T>;
 };
 
 function queryBox<T>(
@@ -33,6 +34,14 @@ function queryBox<T>(
     onFilter?.(column, value);
     return box;
   };
+  // `select` depois de `upsert` é como o PostgREST devolve as linhas que de
+  // fato entraram (com `ignoreDuplicates`, só as novas). O fake precisa dele
+  // desde que `savePosts` passou a contar o retorno em vez de `rows.length`.
+  // Sem este método o builder devolvia `undefined` e a chamada virava
+  // "select is not a function" — capturado pelo try/catch do coletor e
+  // reportado como canal quebrado, que é um jeito bem indireto de descobrir
+  // que o fake está incompleto.
+  box.select = () => box;
   return box;
 }
 
@@ -82,8 +91,11 @@ export function createFakeDb(channels: ChannelRow[], options: FakeDbOptions = {}
 
     upsert: (rows: unknown[]) => {
       upserts.push({ table, rows });
-      return queryBox<null>({
-        data: null,
+      // Devolve as próprias linhas: o fake simula o caso em que tudo era novo.
+      // Duplicata é o caminho que `savePosts` trata devolvendo menos — quem
+      // precisar testar isso configura o retorno.
+      return queryBox<unknown[]>({
+        data: options.upsertError !== undefined ? [] : rows,
         error: options.upsertError !== undefined ? { message: options.upsertError } : null,
       });
     },

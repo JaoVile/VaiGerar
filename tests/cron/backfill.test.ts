@@ -49,14 +49,38 @@ describe("decideBackfill", () => {
     expect(d.nextCursor).toBe(28);
   });
 
-  it("encerra com cursor travado quando o cursor não avança", () => {
+  // Antes concluía o canal aqui, gravando `backfill_complete = true` — que
+  // nada no sistema devolve pra `false`. Um soluço de paginação do `t.me`
+  // truncava o histórico do canal pra sempre.
+  //
+  // Cursor travado significa que o `t.me` devolveu a MESMA página, não que o
+  // arquivo acabou: canal esgotado devolve página VAZIA, que tem ramo próprio.
+  it("cursor travado NÃO conclui o canal — insiste na próxima rodada", () => {
     const d = decideBackfill(
       [post(30, "2026-03-01T00:00:00Z"), post(28, "2026-03-01T00:00:00Z")],
       LIMITE,
       28,
     );
-    expect(d.done).toBe(true);
+    expect(d.done).toBe(false);
     expect(d.reason).toMatch(/cursor.*travado/i);
+  });
+
+  // `nextCursor: null` faria o chamador gravar `backfill_cursor = null`, e o
+  // canal recomeçaria do topo a cada rodada — pior que concluir errado.
+  it("cursor travado mantém o cursor onde está, não o zera", () => {
+    const d = decideBackfill(
+      [post(30, "2026-03-01T00:00:00Z"), post(28, "2026-03-01T00:00:00Z")],
+      LIMITE,
+      28,
+    );
+    expect(d.nextCursor).toBe(28);
+  });
+
+  // O ramo que de fato conclui continua concluindo.
+  it("página vazia sem âncora segue sendo fim de arquivo", () => {
+    const d = decideBackfill([], LIMITE, 28);
+    expect(d.done).toBe(true);
+    expect(d.reason).toMatch(/vazia/i);
   });
 
   it("NÃO conclui quando havia âncoras na página e nenhum post foi extraído", () => {

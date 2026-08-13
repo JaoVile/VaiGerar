@@ -38,6 +38,22 @@ function lerRetryAfter(corpo: string): number | null {
   }
 }
 
+/**
+ * O Telegram recusa uma edição que não mudaria nada, com 400 e
+ * "message is not modified".
+ *
+ * Tem tipo próprio porque **não é falha**: significa que o estado desejado já
+ * vale. O caso real são dois toques rápidos no botão "mais ofertas" — o
+ * segundo pede a mesma página. Sem isso o botão parava de responder e não
+ * havia como o usuário saber por quê.
+ */
+export class TelegramNotModifiedError extends Error {
+  constructor(readonly metodo: string) {
+    super(`Telegram ${metodo}: mensagem já estava com esse conteúdo`);
+    this.name = "TelegramNotModifiedError";
+  }
+}
+
 async function chamar(token: string, metodo: string, corpo: unknown): Promise<void> {
   const r = await fetch(`https://api.telegram.org/bot${token}/${metodo}`, {
     method: "POST",
@@ -48,6 +64,9 @@ async function chamar(token: string, metodo: string, corpo: unknown): Promise<vo
   if (!r.ok) {
     const texto = await r.text();
     if (r.status === 429) throw new TelegramRateLimitError(metodo, lerRetryAfter(texto), texto);
+    if (r.status === 400 && texto.includes("message is not modified")) {
+      throw new TelegramNotModifiedError(metodo);
+    }
     throw new Error(`Telegram ${metodo}: HTTP ${r.status} ${texto.slice(0, 200)}`);
   }
 }
@@ -74,14 +93,23 @@ export async function editMessageText(
   html: string,
   opts: { keyboard?: InlineKeyboard } = {},
 ): Promise<void> {
-  await chamar(token, "editMessageText", {
-    chat_id: chatId,
-    message_id: messageId,
-    text: html,
-    parse_mode: "HTML",
-    disable_web_page_preview: true,
-    ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
-  });
+  try {
+    await chamar(token, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: html,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
+    });
+  } catch (e) {
+    // Engolido aqui, e não em cada chamador, porque para quem pede uma edição
+    // "já está assim" é indistinguível de sucesso. Só a edição tolera isso: em
+    // `sendMessage` a mesma resposta seria comportamento inesperado do
+    // Telegram, e esconder atrapalharia o diagnóstico.
+    if (e instanceof TelegramNotModifiedError) return;
+    throw e;
+  }
 }
 
 export async function answerCallbackQuery(token: string, id: string): Promise<void> {

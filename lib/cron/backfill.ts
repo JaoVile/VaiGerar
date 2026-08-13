@@ -74,10 +74,25 @@ export function decideBackfill(
   }
   const nextCursor = oldest.postId;
   if (previousCursor !== undefined && nextCursor === previousCursor) {
+    // Cursor travado NÃO conclui o canal.
+    //
+    // Pedimos posts anteriores a X e o `t.me` devolveu uma página cujo mais
+    // antigo ainda é X — ou seja, a mesma página. Num canal genuinamente
+    // esgotado a resposta seria uma página VAZIA, que tem ramo próprio logo
+    // acima. Então isto indica paginação repetida, não fim de arquivo.
+    //
+    // Concluir aqui gravava `backfill_complete = true`, e nada no sistema
+    // devolve esse campo pra `false`: um soluço do `t.me` truncava o histórico
+    // do canal pra sempre. O custo de insistir é uma requisição por rodada; o
+    // de concluir errado é permanente. A assimetria decide.
+    //
+    // `nextCursor` volta como o cursor atual de propósito: devolver `null`
+    // faria o chamador gravar `backfill_cursor = null` e o canal recomeçaria
+    // do topo.
     return {
-      done: true,
+      done: false,
       reason: "cursor travado",
-      nextCursor: null,
+      nextCursor: previousCursor,
       broken: false,
     };
   }

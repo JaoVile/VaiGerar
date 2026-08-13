@@ -19,15 +19,19 @@ jobs do cron-job.org — ambos feitos.)
   comentário do código previa, e afrouxar `MAX_PRICE_CENTS`/`MIN_PRICE_CENTS`
   deixa passar "R$ 9.999.999,00" e "R$ 0,50".
 
-- **`"cursor travado"` marca o canal como completo com confiança alta demais.**
-  A razão é heurística: não distingue canal genuinamente raso de um bug de
-  paginação do `t.me` que devolvesse sempre a mesma página com posts válidos.
-  O canário de `countPostAnchors` não pega esse caso, porque os posts continuam
-  sendo extraídos normalmente.
+- ~~**`"cursor travado"` marca o canal como completo com confiança alta demais.**~~
+  **CORRIGIDO em 12/08.** Ele agora **não conclui**: devolve `done: false` e
+  mantém o cursor onde está. O raciocínio que faltava: canal genuinamente
+  esgotado devolve página **vazia**, que já tem ramo próprio — cursor travado
+  significa que o `t.me` repetiu a página. O custo de insistir é uma requisição
+  por rodada; o de concluir errado é permanente, porque nada devolve
+  `backfill_complete` para `false`.
 
-- **`savePosts` devolve `rows.length`, não linhas realmente inseridas.**
-  Com `ignoreDuplicates: true`, o campo `saved` do relatório superestima. É um
-  número que o operador usa para decidir se algo está errado.
+- ~~**`savePosts` devolve `rows.length`, não linhas realmente inseridas.**~~
+  **CORRIGIDO em 12/08** com `.select("id")` no upsert, o mesmo recurso já
+  usado no upsert de `alerts`. O número vai pro relatório do tick, que é onde
+  se decide se um canal parou de trazer novidade — superestimar ali esconde
+  exatamente isso.
 
 - **Post editado no Telegram nunca atualiza no arquivo.** `ignoreDuplicates: true`
   ignora a linha existente em vez de atualizá-la.
@@ -59,11 +63,10 @@ jobs do cron-job.org — ambos feitos.)
   Fica como fragilidade a vigiar se o catálogo crescer muito mais, não como
   defeito.
 
-- **User-Agent se passa por Chrome** (`lib/collector/fetch.ts`). Um identificador
-  próprio com forma de contato seria mais honesto e não muda nada tecnicamente.
-  (`https://t.me/robots.txt` devolve 404 — não há diretiva sendo desobedecida.)
-
-## Etapa C — bot e alertas
+- ~~**User-Agent se passa por Chrome.**~~ **CORRIGIDO em 12/08:** agora é
+  `cacador-ofertas/1.0 (+https://github.com/JaoVile/VaiGerar)`. Tecnicamente
+  não muda nada, mas dá ao outro lado a chance de identificar e falar com quem
+  está lendo.
 
 - **Entrega duplicada de alerta: o gatilho realista é _timeout do tick_, não
   crash — mitigado, não eliminado.** O lease é de **2 minutos** e o tick roda
@@ -96,44 +99,24 @@ jobs do cron-job.org — ambos feitos.)
   `sent_at`, a linha ainda libera pelo lease e repete no tick seguinte. O
   trade-off original continua valendo — perder alerta é pior que repetir.
 
-- **Terceira variante de cupom não coberta: "+ R$X na finalização".** Depois do
-  reprocessamento de 2026-08-10 (27.343 posts, 2.225 preços corrigidos), sobrou
-  este padrão, verificado em dado real:
+- ~~**Variantes de cupom lidas como preço.**~~ **CORRIGIDO em 12/08** junto do
+  item de lista de cupom, abaixo.
 
-  ```
-  "🎟 BRASILPRIME + R$200 na finalização"  → R$200 vira o preço de um S25 Ultra
-  ```
+- ~~**Posts que são lista de cupom ficam com o piso de compra como "preço".**~~
+  **CORRIGIDO em 12/08.** `lib/parse/price.ts` ganhou um nível de descarte
+  **forte**: valores cuja frase inteira diz o que eles são — piso de compra
+  (`"18% de desconto em R$29"`, `"Compras acima de R$399"`), teto do desconto
+  (`"Lim. R$100"`, `"máx de R$40"`, `"até R$2500"`) e valor somado no checkout
+  (`"+ R$200 na finalização"`). Diferente do filtro fraco, o forte **ignora a
+  rede de segurança**: se nada sobreviveu ao filtro de cupom e houve descarte
+  forte, o post é lista de cupom e "sem preço" é a resposta certa.
 
-  Os marcadores atuais (`cupom|desconto|resgate|voucher|codigo`) não pegam
-  "na finalização", e o `🎟` também não está na lista. Efeito medido: a mediana
-  de `galaxy s25` ficou sã (R$3.967, plausível), mas o **mínimo** ainda mostra
-  resíduo (R$200). Como é a mediana que orienta a decisão de compra, não bloqueia.
+  Medido em 10.000 posts: o preço muda em 478 (4,8%), sendo 386 que passam a
+  não ter preço. Recuperou também preço de produto que estava perdido — um
+  notebook arquivado como R$ 200 (o piso de compra) voltou a ser R$ 3.394,05.
 
-  Antes de acrescentar mais marcadores, considere que esta é a terceira variante
-  descoberta — lista de palavras é manutenção infinita. `docs/PLANO.md` propõe
-  ranquear por distância da mediana, que afunda esses valores estruturalmente
-  em vez de enumerá-los.
-
-- **Posts que são lista de cupom ficam com o piso de compra como "preço".**
-  Ex.: `"R$300 OFF a partir de R$1.499"` grava R$1.499. Nem o cupom nem o piso
-  são preço de produto — o certo seria `null`. Não é regressão (antes gravava o
-  valor do cupom, pior), e esses posts raramente casam com busca de produto.
-
-## Review final da branch `mediana-regua` (2026-08-12)
-
-Achados da última revisão antes do merge. Os quatro que valiam correção
-imediata (rótulo do `/cacas`, piso ignorado na faixa, handler do botão "mais
-ofertas" sem teste, "0% acima do teto") foram corrigidos nesta mesma rodada.
-Estes cinco ficaram, com o porquê.
-
-- ~~**A guarda `ORCAMENTO_ENTREGA_MS` é inerte com relógio real.**~~
-  **CORRIGIDA em 12/08.** A checagem passou a acontecer dentro da fila de
-  entrega, antes de cada `sendMessage` — `filaPorChat` serializa por chat,
-  então é o único ponto do caminho onde o relógio já andou. Linha adiada
-  volta limpa, com o mesmo desfazer do 429. O teste antigo contava chamadas
-  em vez de tempo e passava com a guarda inerte; foi trocado por três, um
-  deles com `cronometro()` real e envio lento. Detalhe no item 2 do
-  `docs/PLANO-MELHORIAS.md`.
+  **Fica ~0,22% de cauda longa** (uns 22 posts em 10.000) com formatos únicos.
+  Não vale mais regex: cada uma resolve um ou dois posts.
 
 - **A memoização de `statsDaCaca` não tem teste e não rende na configuração
   atual.** Remover o cache inteiro deixa os testes passando (225/225 no momento

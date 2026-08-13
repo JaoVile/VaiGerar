@@ -6,6 +6,7 @@ import {
   formatCacas,
   formatCupons,
   formatMenorAtual,
+  formatResumo,
   formatTendencia,
   formatSearchPagina,
 } from "@/lib/bot/format";
@@ -13,6 +14,7 @@ import { criarHunt, desativarHunt, listarHunts } from "@/lib/bot/hunts-repo";
 import { menorAtualPorCaca } from "@/lib/hunts/atual";
 import { FLOW_BUSCA, FLOW_CACA, lerSessao, limparSessao, salvarSessao } from "@/lib/bot/session";
 import { buscarCupons } from "@/lib/search/coupons";
+import { resumoDoDia } from "@/lib/search/digest";
 import { buscar } from "@/lib/search/query";
 import { tendencia } from "@/lib/search/trend";
 import { answerCallbackQuery, editMessageText, sendMessage } from "@/lib/telegram";
@@ -232,6 +234,11 @@ export async function tratar(db: SupabaseClient, token: string, entrada: Entrada
     const out = iniciar();
     await salvarSessao(db, chatId, FLOW_CACA, "ask_product", out.data, new Date());
     await sendMessage(token, chatId, out.texto);
+    return;
+  }
+
+  if (comando === "/hoje" || comando === "/resumo") {
+    await sendMessage(token, chatId, formatResumo(await resumoDoDia(db)));
     return;
   }
 

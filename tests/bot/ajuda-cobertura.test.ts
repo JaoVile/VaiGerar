@@ -62,6 +62,10 @@ describe("/ajuda cobre o que o bot aceita", () => {
     expect(ajuda).toContain("Menor preço agora");
   });
 
+  it("explica que o resumo do dia usa o histórico do próprio produto", () => {
+    expect(ajuda.toLowerCase()).toContain("preço histórico do próprio produto");
+  });
+
   it("diz que dá pra buscar sem digitar comando", () => {
     expect(ajuda.toLowerCase()).toContain("sem comando");
   });

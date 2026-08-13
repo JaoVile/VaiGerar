@@ -1,6 +1,7 @@
 import { JANELA_HORAS } from "@/lib/cron/alerts";
 import type { CacaAtual } from "@/lib/hunts/atual";
 import type { ResultadoCupons } from "@/lib/search/coupons";
+import { JANELA_HORAS as JANELA_HORAS_DIA, type ResumoDoDia } from "@/lib/search/digest";
 import type { Tendencia } from "@/lib/search/trend";
 import { MESES_PADRAO, type SearchResult } from "@/lib/search/query";
 import { escapeHtml, type InlineKeyboard } from "@/lib/telegram";
@@ -461,6 +462,64 @@ export function formatMenorAtual(cacas: CacaAtual[], agora: Date = new Date()): 
   return linhas.join("\n");
 }
 
+const NOME_SECAO: Record<string, string> = {
+  tech: "💻 Tech e hardware",
+  china: "📦 Importados",
+  casa: "🏠 Casa e eletro",
+  moda: "👕 Moda",
+  geral: "🛒 Geral",
+};
+
+/**
+ * Resumo do dia.
+ *
+ * Cada linha traz o preço de hoje **e a mediana do mesmo produto** — sem a
+ * segunda, "-38%" é um número que o usuário tem que aceitar no escuro. Traz
+ * também o tamanho da amostra: um desconto sustentado por 3 anúncios merece
+ * menos fé que um sustentado por 58, e esconder isso seria vender certeza que
+ * o dado não tem.
+ */
+export function formatResumo(r: ResumoDoDia, agora: Date = new Date()): string {
+  const dia = agora.toISOString().slice(0, 10);
+  if (r.secoes.length === 0) {
+    return [
+      `📊 <b>Resumo do dia</b> · ${dia}`,
+      "",
+      `Examinei ${r.examinados} ofertas das últimas ${JANELA_HORAS_DIA}h e <b>nenhuma</b> ficou claramente abaixo do preço histórico do próprio produto.`,
+      "",
+      "<i>Dia fraco acontece. Prefiro dizer isso a inventar destaque — se eu listasse os maiores descontos sem essa régua, o topo seria erro de leitura de preço.</i>",
+    ].join("\n");
+  }
+
+  const total = r.secoes.reduce((n, s) => n + s.achados.length, 0);
+  const linhas = [
+    `📊 <b>Resumo do dia</b> · ${dia}`,
+    `<i>${total} ofertas abaixo do preço histórico, de ${r.examinados} examinadas nas últimas ${JANELA_HORAS_DIA}h</i>`,
+    "",
+  ];
+
+  for (const secao of r.secoes) {
+    linhas.push(`<b>${NOME_SECAO[secao.kind] ?? secao.kind}</b>`, "");
+    for (const a of secao.achados) {
+      const loja = a.store ? ` · ${escapeHtml(a.store)}` : "";
+      linhas.push(
+        `<b>−${a.descontoPct}%</b> · <b>${formatBRL(a.priceCents)}</b>${loja}`,
+        `   ${escapeHtml(a.titulo)}`,
+        `   <i>vinha saindo por ${formatBRL(a.medianaCents)} (${a.amostra} anúncios)</i>`,
+      );
+      if (a.productUrl) {
+        linhas.push(`   <a href="${escapeHtml(a.productUrl)}">ir para a oferta</a>`);
+      }
+      linhas.push(`   <a href="${escapeHtml(a.url)}">ver post</a>`, "");
+    }
+  }
+
+  linhas.push(
+    "<i>A régua é o próprio produto: comparo com a mediana dele nos últimos 30 dias, não com o resto do mercado. Por isso a lista é curta.</i>",
+  );
+  return linhas.join("\n");
+}
+
 export type CacaResumo = {
   label: string;
   priceMinCents: number;
@@ -577,6 +636,13 @@ export function formatAjuda(): string {
     "<i>Só aviso de oferta recente (últimas 48h) — não adianta te mandar promoção que já acabou.</i>",
     "<i>Se você começar um /cacar e mandar outro comando no meio, eu cancelo a conversa e aviso.</i>",
     "",
+    "<b>━━━ O melhor do dia ━━━</b>",
+    "",
+    "/hoje — as ofertas das últimas 24h que estão <b>abaixo do preço histórico do próprio produto</b>, separadas por seção (tech, importados, casa, moda, geral).",
+    "",
+    "A régua é o próprio produto, não o mercado: comparo com a mediana dele nos últimos 30 dias. Por isso a lista é curta — costuma dar menos de 10.",
+    '<i>Se eu ranqueasse por maior desconto, o topo seria erro de leitura de preço e post de cupom. Prefiro dizer "dia fraco" a inventar destaque.</i>',
+    "",
     "<b>━━━ Comprar agora ou esperar ━━━</b>",
     "",
     "/tendencia &lt;modelo&gt; — como o preço andou nos últimos meses:",
@@ -605,7 +671,7 @@ export function formatAjuda(): string {
     "",
     "/ajuda — esta mensagem",
     "",
-    "<i>Também respondo a /cupons, /tendência e /start.</i>",
+    "<i>Também respondo a /resumo, /cupons, /tendência e /start.</i>",
     "",
     "<b>━━━ Dica ━━━</b>",
     "",

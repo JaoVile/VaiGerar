@@ -200,8 +200,47 @@ export async function resumoDoDia(
     });
   }
 
+  // Segunda passada de dedup, por SOBREPOSIÇÃO de tokens.
+  //
+  // A chave de 5 tokens separa produto de produto, mas escorrega quando dois
+  // canais anunciam o mesmo item com uma palavra a mais na frente: "Samsung
+  // Galaxy A57 5G 128GB" e "Celular Samsung Galaxy A57 5G" geram chaves
+  // diferentes e o A57 saía duas vezes no mesmo resumo, em seções diferentes.
+  //
+  // Interseção de 4 dos 5 tokens NÃO basta sozinha: "Placa Mãe MSI B550M A PRO
+  // DDR4" e "Placa Mãe MSI B450M A PRO DDR4" compartilham 4 tokens e são
+  // placas diferentes. Isso apareceu no primeiro teste da regra.
+  //
+  // O que separa modelo de modelo é sempre o token COM DÍGITO (b550m, a57,
+  // 5g). Então o merge exige, além da interseção, que os tokens com dígito de
+  // uma chave sejam subconjunto dos da outra:
+  //
+  //   {samsung galaxy a57 5g 128gb} vs {celular samsung galaxy a57 5g}
+  //     dígitos: {a57,5g,128gb} ⊃ {a57,5g}  -> mesmo produto, funde
+  //
+  //   {placa mae msi b550m pro} vs {placa mae msi b450m pro}
+  //     dígitos: {b550m} e {b450m}, nenhum contém o outro  -> não funde
+  const MIN_SOBREPOSICAO = 4;
+  const comDigito = (ts: Set<string>) => new Set([...ts].filter((t) => /\d/.test(t)));
+  const contido = (a: Set<string>, b: Set<string>) => [...a].every((t) => b.has(t));
+  const unicos: Array<[Set<string>, Achado]> = [];
+  for (const [chave, achado] of porProduto) {
+    const tokens = new Set(chave.split(" "));
+    const meus = comDigito(tokens);
+    const igual = unicos.find(([outros]) => {
+      if ([...tokens].filter((t) => outros.has(t)).length < MIN_SOBREPOSICAO) return false;
+      const deles = comDigito(outros);
+      return contido(meus, deles) || contido(deles, meus);
+    });
+    if (!igual) {
+      unicos.push([tokens, achado]);
+      continue;
+    }
+    if (achado.priceCents < igual[1].priceCents) igual[1] = achado;
+  }
+
   const porKind = new Map<string, Achado[]>();
-  for (const a of porProduto.values()) {
+  for (const [, a] of unicos) {
     porKind.set(a.kind, [...(porKind.get(a.kind) ?? []), a]);
   }
 

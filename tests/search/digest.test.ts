@@ -143,6 +143,39 @@ describe("resumoDoDia", () => {
     expect(todos[0].priceCents).toBe(9000);
   });
 
+  // Visto no primeiro resumo real: o Galaxy A57 saiu duas vezes, em seções
+  // diferentes, porque um anúncio começava com "Celular" e o outro não — a
+  // palavra a mais empurra os 5 tokens da chave e gera duas chaves.
+  it("mesmo produto anunciado com uma palavra a mais na frente não duplica", async () => {
+    const a = "Samsung Galaxy A57 5G 128GB 8GB RAM Camera 50MP";
+    const b = "Celular Samsung Galaxy A57 5G 128GB 8GB RAM";
+    const db = cenario([
+      ...historico(4, 179290, { text: a }),
+      ...historico(4, 176000, { text: b, channel_slug: "promocasinha" }),
+      post({ text: a, price_cents: 145719, posted_at: hHoje(2) }),
+      post({ text: b, price_cents: 145700, posted_at: hHoje(1), channel_slug: "promocasinha" }),
+    ]);
+    const r = await resumoDoDia(db.client, AGORA);
+
+    expect(r.secoes.flatMap((s) => s.achados)).toHaveLength(1);
+  });
+
+  // A sobreposição não pode ser tão frouxa a ponto de juntar modelos vizinhos,
+  // que diferem exatamente no token do modelo.
+  it("modelos vizinhos continuam sendo produtos diferentes", async () => {
+    const a = "Placa Mae MSI B550M A PRO DDR4";
+    const b = "Placa Mae MSI B450M A PRO DDR4";
+    const db = cenario([
+      ...historico(4, 59300, { text: a }),
+      ...historico(4, 45000, { text: b }),
+      post({ text: a, price_cents: 45100, posted_at: hHoje(2) }),
+      post({ text: b, price_cents: 34000, posted_at: hHoje(1) }),
+    ]);
+    const r = await resumoDoDia(db.client, AGORA);
+
+    expect(r.secoes.flatMap((s) => s.achados)).toHaveLength(2);
+  });
+
   it("separa por seção e ignora as vazias", async () => {
     const db = cenario([
       ...historico(4, 14900),

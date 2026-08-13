@@ -95,6 +95,19 @@ describe("extrairCupons", () => {
     expect(extrairCupons("Cupom: OIPRIME15 em compras acima de R$ 200")[0].pisoCents).toBe(20000);
   });
 
+  // Visto na lista real do /cupom amazon monitor: "FAMILIA — 106%". O 106 era
+  // especificação do monitor (cobertura de cor), não desconto. Cupom acima de
+  // 90% não existe.
+  it("número acima de 90% não é desconto de cupom", () => {
+    expect(extrairCupons("Monitor 106% sRGB cupom: FAMILIA")[0].descontoTexto).toBeNull();
+    expect(extrairCupons("Tela 144% NTSC cupom: TESTE12")[0].descontoTexto).toBeNull();
+  });
+
+  it("porcentagem plausível continua sendo lida", () => {
+    expect(extrairCupons("cupom: TOMA15 15% de desconto")[0].descontoTexto).toBe("15%");
+    expect(extrairCupons("cupom: META90 90% de desconto")[0].descontoTexto).toBe("90%");
+  });
+
   it("desconto e piso ficam nulos quando o post não diz", () => {
     const c = extrairCupons("Cupom: SEMPREMODA")[0];
     expect(c.descontoTexto).toBeNull();

@@ -112,7 +112,20 @@ const NAO_E_CODIGO = new Set([
   "VEJA",
 ]);
 
-const RE_DESCONTO = /(\d{1,3}\s*%|R\$\s*\d{1,4}(?:[.,]\d{2})?\s*(?:de\s+)?(?:off|desconto))/i;
+/**
+ * Valor do desconto.
+ *
+ * A porcentagem para em 90 de propósito. Com `\d{1,3}` qualquer número virava
+ * desconto e a lista real do `/cupom amazon monitor` saiu com
+ * **"FAMILIA — 106%"** — o 106 vinha da especificação do monitor (taxa de
+ * cobertura de cor), não de desconto nenhum. Cupom acima de 90% não existe.
+ *
+ * O `(?<![\d,.])` não é enfeite: sem ele, limitar o número a 90 não resolve
+ * nada, porque a regex casa o **"6%" de dentro de "106%"**. Foi o que
+ * aconteceu na primeira tentativa desta correção.
+ */
+const RE_DESCONTO =
+  /((?<![\d,.])(?:90|[1-8]?\d)\s*%|R\$\s*\d{1,4}(?:[.,]\d{2})?\s*(?:de\s+)?(?:off|desconto))/i;
 
 /**
  * Compra mínima. As quatro formas abaixo saíram do arquivo real:

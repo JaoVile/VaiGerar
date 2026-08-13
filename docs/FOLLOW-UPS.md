@@ -14,12 +14,12 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
 
 ## Vale corrigir quando tocar no código
 
-- **Sem teste de regressão para o teto de preço e para `datetime` inválido.**
-  As duas guardas existem (`MAX_PRICE_CENTS` em `lib/parse/price.ts`; validação
-  de data em `lib/collector/parse.ts`) mas nenhuma fixture as exercita — a
-  garantia hoje vem só da leitura do código. Um post com preço absurdo ou data
-  malformada trava a gravação do lote inteiro, e no backfill isso é permanente,
-  então a regressão seria cara.
+- ~~**Sem teste de regressão para o teto de preço e para `datetime` inválido.**~~
+  **RESOLVIDO em 12/08.** `tests/collector/parse.test.ts` monta páginas com
+  post estragado de propósito e cobra as duas guardas. Verificado por mutação:
+  tirar a checagem de data reproduz o `RangeError: Invalid time value` que o
+  comentário do código previa, e afrouxar `MAX_PRICE_CENTS`/`MIN_PRICE_CENTS`
+  deixa passar "R$ 9.999.999,00" e "R$ 0,50".
 
 - **`"cursor travado"` marca o canal como completo com confiança alta demais.**
   A razão é heurística: não distingue canal genuinamente raso de um bug de
@@ -32,19 +32,34 @@ bloqueia a operação; estão aqui para não serem redescobertas do zero.
   número que o operador usa para decidir se algo está errado.
 
 - **Post editado no Telegram nunca atualiza no arquivo.** `ignoreDuplicates: true`
-  ignora a linha existente em vez de atualizá-la. Canais de oferta editam preço
-  e marcam "encerrado" o tempo todo. Isso é consequência não examinada do desenho,
-  não escolha deliberada — vira relevante na Etapa B, quando o preço arquivado
-  virar base de alerta.
+  ignora a linha existente em vez de atualizá-la.
 
-- **`productUrl` é o primeiro link do post**, que pode ser o do rodapé do canal
-  ("entre no nosso grupo") em vez do link do produto. Vira dívida visível na
-  Etapa B, quando esse link for mostrado ao usuário.
+  **Medido em 12/08, sem evidência de ser problema ativo:** comparando 99 posts
+  de 5 canais com o que está no ar, **zero** aparece marcado como `edited` no
+  `t.me`. A premissa de que "canais de oferta editam o tempo todo" não se
+  sustentou nesta amostra.
 
-- **O tick busca os 7 canais em paralelo** (`Promise.all`), e cresce linearmente
-  a cada canal novo no seed. Sem tratamento de 429, sem backoff, sem jitter. O
-  backfill é serial de propósito; os dois cron se contradizem nesse ponto. Um
-  limite de concorrência de 2–3 resolveria sem custo real de latência.
+  A comparação acusou 34% de divergência, mas é **artefato**: `htmlToText`
+  descarta conteúdo riscado de propósito (o preço velho), então o arquivo
+  guarda `DE 🔥 POR R$ 1.747,90` onde o post ao vivo diz
+  `DE R$ 2.989,00 🔥 POR R$ 1.747,90`. Efeito colateral conhecido: esse texto
+  também alimenta o índice de busca.
+
+- ~~**`productUrl` é o primeiro link do post**~~ — **MEDIDO em 12/08 e
+  descartado.** Em 8.000 posts com `product_url`, só **5 (0,1%)** apontam para
+  grupo ou canal; o resto são encurtadores de loja (`meli.la`, `amzn.to`,
+  `link.amazon`, `s.shopee.com.br`, `pechin.co`). O link já é mostrado ao
+  usuário em três lugares desde 12/08 e o risco previsto não se materializou.
+
+- **O tick busca todos os canais em paralelo** (`Promise.all`), hoje 25. Sem
+  tratamento de 429, sem backoff, sem jitter.
+
+  **Reavaliado em 12/08, prioridade baixa:** `ingestChannel` captura a própria
+  exceção e devolve relatório de erro, então `Promise.all` nunca rejeita e um
+  canal quebrado não derruba a rodada — o risco descrito originalmente não
+  existe. Medido com 25 canais: 3 ticks seguidos, zero erro, 2,9 s a quente.
+  Fica como fragilidade a vigiar se o catálogo crescer muito mais, não como
+  defeito.
 
 - **User-Agent se passa por Chrome** (`lib/collector/fetch.ts`). Um identificador
   próprio com forma de contato seria mais honesto e não muda nada tecnicamente.

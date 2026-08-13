@@ -40,3 +40,84 @@ describe("parseChannelPage", () => {
     expect(parseChannelPage(fixture("vazio.html"), "qualquer")).toEqual([]);
   });
 });
+
+/**
+ * Página mínima com N posts, cada um com `datetime` e texto controlados.
+ * Serve pra exercitar as guardas sem depender de uma fixture real conter um
+ * post estragado — que é justamente o que nunca acontece de propósito.
+ */
+function paginaComPosts(posts: Array<{ id: number; datetime: string; texto: string }>): string {
+  return posts
+    .map(
+      (p) => `<div class="tgme_widget_message" data-post="canal/${p.id}">
+<div class="tgme_widget_message_text js-message_text">${p.texto}</div>
+<time datetime="${p.datetime}"></time>
+</div>`,
+    )
+    .join("\n");
+}
+
+const OK = "2026-08-12T12:00:00+00:00";
+
+describe("parseChannelPage — guardas que protegem o lote", () => {
+  // As duas guardas abaixo existiam sem nenhuma fixture as exercitando: a
+  // garantia vinha só da leitura do código. Estão registradas em
+  // docs/FOLLOW-UPS.md como dívida justamente por isso.
+  //
+  // O custo de a guarda falhar não é perder um post: `savePosts` grava em
+  // lote, então uma linha venenosa derruba a gravação inteira. No backfill,
+  // que reprocessa a mesma página, o dano é permanente — o canal para de
+  // recuar para sempre.
+  it("post com datetime malformado é pulado, e os vizinhos sobrevivem", () => {
+    const html = paginaComPosts([
+      { id: 1, datetime: OK, texto: "Air Fryer por R$ 299,00" },
+      { id: 2, datetime: "ontem de tarde", texto: "TV 50 por R$ 1.999,00" },
+      { id: 3, datetime: OK, texto: "Notebook por R$ 2.499,00" },
+    ]);
+    const posts = parseChannelPage(html, "canal");
+
+    expect(posts.map((p) => p.postId)).toEqual([1, 3]);
+    for (const p of posts) {
+      expect(new Date(p.postedAt).toString()).not.toBe("Invalid Date");
+    }
+  });
+
+  it("datetime vazio não vira data de 1970 nem lança", () => {
+    const html = paginaComPosts([
+      { id: 1, datetime: "", texto: "Air Fryer por R$ 299,00" },
+      { id: 2, datetime: OK, texto: "TV por R$ 1.999,00" },
+    ]);
+    expect(() => parseChannelPage(html, "canal")).not.toThrow();
+    expect(parseChannelPage(html, "canal").map((p) => p.postId)).toEqual([2]);
+  });
+
+  // MAX_PRICE_CENTS é R$ 5.000.000,00. Um anúncio com número absurdo (erro de
+  // digitação, ou um código que parece dinheiro) não pode virar preço: ele
+  // entraria na mediana e desregularia a régua do sistema inteiro.
+  it("preço acima do teto plausível não é gravado como preço", () => {
+    const html = paginaComPosts([
+      { id: 1, datetime: OK, texto: "Casa na praia por R$ 9.999.999,00" },
+    ]);
+    const posts = parseChannelPage(html, "canal");
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].priceCents).toBeNull();
+  });
+
+  it("preço abaixo do piso plausível não é gravado como preço", () => {
+    const html = paginaComPosts([{ id: 1, datetime: OK, texto: "Leve por R$ 0,50" }]);
+    expect(parseChannelPage(html, "canal")[0].priceCents).toBeNull();
+  });
+
+  // O post continua sendo gravado — só sem preço. Descartar o post inteiro
+  // perderia o texto, que ainda serve para busca.
+  it("post com preço implausível ainda entra no arquivo, sem preço", () => {
+    const html = paginaComPosts([
+      { id: 1, datetime: OK, texto: "Mansão por R$ 90.000.000,00 imperdível" },
+    ]);
+    const posts = parseChannelPage(html, "canal");
+
+    expect(posts[0].text).toContain("Mansão");
+    expect(posts[0].priceCents).toBeNull();
+  });
+});

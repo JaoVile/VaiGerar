@@ -281,12 +281,25 @@ export async function processarAlertas(
   let casados = 0;
   if (hunts.length > 0) {
     const desdeIso = new Date(agora.getTime() - JANELA_HORAS * 60 * 60 * 1000).toISOString();
+    // Recorte por faixa de preço no banco. Com a marca d'água o tick lê poucas
+    // linhas e o `limit` nunca chega perto — exceto no caso que importa: caça
+    // recém-criada tem marca 0 e varre as 48h inteiras. Medido em 12/08, essas
+    // 48h têm 3.722 posts com preço, então "os 500 mais recentes" cobriam
+    // 6,4h, e a caça nova nascia enxergando um oitavo da janela.
+    //
+    // A união das faixas derruba pra ~136 linhas. É o mesmo corte que `casa()`
+    // faz depois, só que antes de transferir.
+    const menorPiso = Math.min(...hunts.map((h) => h.priceMinCents));
+    const maiorTeto = Math.max(...hunts.map((h) => h.priceMaxCents));
+
     const { data: postRows, error: postErr } = await db
       .from("posts")
       .select("id,text,price_cents,store,url,posted_at")
       .not("price_cents", "is", null)
       .gte("posted_at", desdeIso)
       .gt("id", desdeId)
+      .gte("price_cents", menorPiso)
+      .lte("price_cents", maiorTeto)
       .order("id", { ascending: false })
       .limit(JANELA_POSTS);
     if (postErr) throw new Error(`Lendo posts para alerta: ${postErr.message}`);

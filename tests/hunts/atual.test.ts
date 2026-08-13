@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatBRL, formatMenorAtual } from "@/lib/bot/format";
 import { menorAtualPorCaca } from "@/lib/hunts/atual";
-import { argsDe, createQueryFake } from "@/tests/helpers/fake-db";
+import { argsDe, createQueryFake, todasAsChamadas } from "@/tests/helpers/fake-db";
 
 const AGORA = new Date("2026-08-12T12:00:00Z");
 
@@ -40,6 +40,32 @@ describe("menorAtualPorCaca", () => {
     expect(coluna).toBe("posted_at");
     const horas = (AGORA.getTime() - new Date(valor).getTime()) / 3_600_000;
     expect(horas).toBe(48);
+  });
+
+  // Medido em 12/08: as últimas 48h têm 3.722 posts com preço. Ler "os 500 mais
+  // recentes" cobria 6,4h em vez de 48h — o botão anunciava uma janela e lia
+  // 13% dela, e nenhuma das 6 caças de Galaxy encontrava nada. Filtrar a faixa
+  // no banco derruba pra 136 linhas e o teto deixa de ser alcançado.
+  it("pede ao banco só a faixa de preço que interessa", async () => {
+    const db = createQueryFake({
+      select: {
+        hunts: [
+          huntRow({ price_min_cents: 285000, price_max_cents: 315000 }),
+          huntRow({ id: "h2", price_min_cents: 234000, price_max_cents: 363000 }),
+        ],
+        posts: [postRow()],
+      },
+    });
+    await menorAtualPorCaca(db.client, 7, AGORA);
+
+    const q = db.de("select", "posts")[0];
+    // `todasAsChamadas` e não `argsDe`: há dois `.gte()` na cadeia (data e
+    // preço), e `argsDe` devolve só o primeiro.
+    const gtes = todasAsChamadas(q, "gte").map((c) => c.args);
+    // União das faixas das duas caças, não a interseção: cada caça filtra a
+    // sua depois, no `casa()`.
+    expect(gtes).toContainEqual(["price_cents", 234000]);
+    expect(argsDe(q, "lte")).toEqual(["price_cents", 363000]);
   });
 
   it("uma consulta de posts só, mesmo com várias caças", async () => {

@@ -73,11 +73,25 @@ export async function menorAtualPorCaca(
   if (hunts.length === 0) return [];
 
   const desde = new Date(agora.getTime() - JANELA_HORAS * 60 * 60 * 1000).toISOString();
+
+  // Recorte por faixa de preço no BANCO, não no cliente. Sem ele o `limit`
+  // engolia a janela: medido em 12/08, as últimas 48h têm 3.722 posts com
+  // preço, e ler "os 500 mais recentes" cobria **6,4h em vez de 48h** — o
+  // botão mostrava 13% do que anunciava, e nenhum Galaxy aparecia.
+  //
+  // A união das faixas das caças derruba 3.722 para 136 linhas, então o teto
+  // deixa de ser alcançado. É o mesmo trabalho que `casa()` faria depois, só
+  // que feito onde custa uma condição em vez de uma transferência.
+  const menorPiso = Math.min(...hunts.map((h) => h.priceMinCents));
+  const maiorTeto = Math.max(...hunts.map((h) => h.priceMaxCents));
+
   const { data: postRows, error: postErr } = await db
     .from("posts")
     .select("id,text,price_cents,store,url,product_url,posted_at")
     .not("price_cents", "is", null)
     .gte("posted_at", desde)
+    .gte("price_cents", menorPiso)
+    .lte("price_cents", maiorTeto)
     .order("id", { ascending: false })
     .limit(TETO_POSTS);
   if (postErr) throw new Error(`Lendo posts recentes: ${postErr.message}`);

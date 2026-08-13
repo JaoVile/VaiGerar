@@ -279,6 +279,25 @@ describe("processarAlertas — claim com lease", () => {
   // Egress medido em 12/08: a consulta de casamento relia a janela de 48h
   // inteira a cada tick — 378 KB x 288 ticks/dia = 3,11 GB/mês, 62% do limite
   // de 5 GB/mês do free tier, antes de coleta, backfill e buscas.
+  // Com a marca d'água o tick lê poucas linhas e o limite nunca é alcançado —
+  // exceto no caso que importa: caça recém-criada tem marca 0 e varre as 48h
+  // inteiras. Medido em 12/08 essas 48h têm 3.722 posts com preço, então "os
+  // 500 mais recentes" cobriam 6,4h e a caça nova nascia meio cega.
+  it("pede ao banco só a faixa de preço das caças ativas", async () => {
+    const db = cenario({
+      hunts: [
+        { ...huntRow, price_min_cents: 285000, price_max_cents: 315000 },
+        { ...huntRow, id: "h2", price_min_cents: 234000, price_max_cents: 363000 },
+      ],
+    });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const q = db.de("select", "posts")[0];
+    const gtes = todasAsChamadas(q, "gte").map((c) => c.args);
+    expect(gtes).toContainEqual(["price_cents", 234000]);
+    expect(argsDe(q, "lte")).toEqual(["price_cents", 363000]);
+  });
+
   it("lê só o que entrou depois da marca d'água, com a margem de segurança", async () => {
     const db = cenario({
       hunts: [{ ...huntRow, last_post_row_id: 5000 }],

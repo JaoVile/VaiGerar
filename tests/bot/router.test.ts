@@ -157,14 +157,16 @@ describe("tratar /cacas", () => {
     buscarMock.mockReset();
   });
 
-  it("lista as caças ativas com a faixa de preço", async () => {
+  // Mostra o TETO, não a faixa: o piso deixou de ser preferência do usuário
+  // em 13/08 e virou só a guarda contra preço mal lido.
+  it("lista as caças ativas com o teto de preço", async () => {
     await tratar(dbComHunts([hunt("s25 plus")]), "tok", {
       chatId: 7,
       texto: "/cacas",
     });
     const [, , html] = sendMessageMock.mock.calls[0];
     expect(html).toContain("s25 plus");
-    expect(html).toContain("R$ 2.850,00");
+    expect(html.toLowerCase()).toContain("seu teto");
   });
 
   // Sem escape isto é uma trava permanente: o Telegram recusa a mensagem

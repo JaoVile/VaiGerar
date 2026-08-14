@@ -321,16 +321,22 @@ describe("formatSearchPagina", () => {
 describe("formatCacas", () => {
   const base = {
     label: "Galaxy S25 Plus",
-    priceMinCents: 270000,
+    // Piso = metade do alvo (R$ 3.000), não alvo menos tolerância. Mudou em
+    // 13/08 porque a faixa antiga rejeitava oferta boa demais.
+    priceMinCents: 150000,
     priceMaxCents: 330000,
     melhorAtualCents: 351912,
     medianaCents: 396800,
   };
 
-  it("mostra a faixa pedida", () => {
+  // O que o usuário pediu é um TETO, não uma faixa. Mostrar o piso junto
+  // confundia: ele não é preferência do usuário, é só a guarda contra preço
+  // mal lido, e passou a ser metade do alvo em 13/08.
+  it("mostra o teto pedido, não uma faixa", () => {
     const s = formatCacas([base]);
-    expect(s).toContain(formatBRL(270000));
     expect(s).toContain(formatBRL(330000));
+    expect(s.toLowerCase()).toContain("seu teto");
+    expect(s).not.toContain(formatBRL(270000));
   });
 
   it("mostra o melhor preço do arquivo e quanto falta cair", () => {
@@ -357,15 +363,20 @@ describe("formatCacas", () => {
     expect(s.toLowerCase()).toMatch(/oferta já encerrada|reaparecer/);
   });
 
-  // `casa()` rejeita preço abaixo do piso — o piso existe pra acessório não
-  // disparar alerta. Imprimir esse preço como "na faixa" fazia a listagem e o
-  // motor de alerta discordarem sobre a mesma pergunta.
-  it("não chama de faixa um preço abaixo do piso, e diz por quê", () => {
+  // `casa()` ainda rejeita preço abaixo do piso, mas o piso virou metade do
+  // alvo. Um preço entre o piso e o teto agora É alerta — inclusive quando
+  // está bem abaixo do alvo, que é o caso que o sistema perdia antes.
+  it("preço abaixo do alvo mas acima do piso conta como atingido", () => {
     const s = formatCacas([{ ...base, melhorAtualCents: 250000 }]);
     expect(s).toContain(formatBRL(250000));
+    expect(s.toLowerCase()).toContain("já apareceu");
+  });
+
+  it("preço abaixo do piso é explicado como barato demais, não como faixa", () => {
+    const s = formatCacas([{ ...base, melhorAtualCents: 4000 }]);
+    expect(s).toContain(formatBRL(4000));
     expect(s.toLowerCase()).not.toContain("já apareceu na sua faixa");
-    expect(s.toLowerCase()).toContain("abaixo do seu piso");
-    expect(s.toLowerCase()).toMatch(/barato demais|acessório/);
+    expect(s.toLowerCase()).toContain("barato demais");
   });
 
   // Entre +0,01% e +0,49% o arredondamento dava "0% acima do seu teto", que se

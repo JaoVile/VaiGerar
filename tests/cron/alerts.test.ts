@@ -200,7 +200,7 @@ describe("processarAlertas — janela de casamento", () => {
     expect(r.casados).toBe(0);
 
     const upsert = db.de("upsert", "alerts")[0];
-    expect(upsert.rows).toEqual([{ hunt_id: "h1", post_row_id: 10 }]);
+    expect(upsert.rows).toEqual([{ hunt_id: "h1", post_row_id: 10, kind: "faixa" }]);
     expect(argsDe(upsert, "select")).toEqual(["id"]);
   });
 });
@@ -638,5 +638,58 @@ describe("alerta com foto", () => {
 
     const selects = db.de("select", "posts").map((q) => argsDe(q, "select")?.[0]);
     expect(selects.some((s) => String(s).includes("photo_url"))).toBe(true);
+  });
+});
+
+describe("aviso de aproximação", () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+    sendPhotoMock.mockReset();
+  });
+
+  // Teto da caça é 315000; 330000 fica 4,8% acima, dentro da margem de 8%.
+  const pertoRow = { ...postRow, price_cents: 330000 };
+
+  it("preço acima do teto vira alerta de tipo 'perto', não 'faixa'", async () => {
+    const db = cenario({ posts: [pertoRow] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const up = db.de("upsert", "alerts")[0];
+    expect(up.rows).toEqual([{ hunt_id: "h1", post_row_id: 10, kind: "perto" }]);
+  });
+
+  it("a mensagem do aviso não se confunde com a do alerta", async () => {
+    const db = cenario({ posts: [pertoRow], pendentes: [{ ...pendente, kind: "perto" }] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const [, , html] = sendMessageMock.mock.calls[0];
+    expect(html).toContain("chegou perto");
+    expect(html).toContain("acima do seu teto");
+    // O alerta de verdade diz quanto está ABAIXO; o aviso nunca pode dizer
+    // isso, senão gasta a confiança que o alerta precisa ter.
+    expect(html).not.toContain("abaixo do teto");
+  });
+
+  it("aviso diz quanto falta em reais, não só em porcentagem", async () => {
+    const db = cenario({ posts: [pertoRow], pendentes: [{ ...pendente, kind: "perto" }] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    // 330000 - 315000 = 15000
+    expect(sendMessageMock.mock.calls[0][2]).toContain("R$ 150,00");
+  });
+
+  // O aviso não afirma que é bom negócio, então não gasta consulta de mercado.
+  it("aviso não busca estatística de mercado", async () => {
+    const db = cenario({ posts: [pertoRow], pendentes: [{ ...pendente, kind: "perto" }] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const [, , html] = sendMessageMock.mock.calls[0];
+    expect(html.toLowerCase()).not.toContain("mediana");
+  });
+
+  it("preço muito acima do teto não vira nem aviso", async () => {
+    const db = cenario({ posts: [{ ...postRow, price_cents: 500000 }] });
+    const r = await processarAlertas(db.client, "tok", AGORA);
+    expect(r.casados).toBe(0);
   });
 });

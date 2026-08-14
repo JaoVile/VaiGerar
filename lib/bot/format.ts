@@ -541,6 +541,48 @@ export function formatResumo(r: ResumoDoDia, agora: Date = new Date()): string {
   return linhas.join("\n");
 }
 
+/**
+ * Aviso de aproximação: o preço encostou no teto mas não entrou.
+ *
+ * Existe porque as caças reais tinham alvo 2% a 7% abaixo do que o mercado já
+ * praticou e ficaram 3 meses sem disparar. O tom é deliberadamente diferente
+ * do alerta — "chegou perto", não "achei" — pra não gastar a confiança que o
+ * alerta de verdade precisa ter.
+ */
+export function formatAviso(
+  label: string,
+  tetoCents: number,
+  post: {
+    priceCents: number;
+    store: string | null;
+    url: string;
+    productUrl: string | null;
+    text: string;
+    postedAt: string;
+  },
+): string {
+  const acima = Math.round((post.priceCents / tetoCents - 1) * 100);
+  const falta = post.priceCents - tetoCents;
+  const loja = post.store ? ` · ${escapeHtml(post.store)}` : "";
+
+  const linhas = [
+    `👀 <b>${escapeHtml(label)}</b> — chegou perto`,
+    `<b>${formatBRL(post.priceCents)}</b>${loja}`,
+    `${acima}% acima do seu teto de ${formatBRL(tetoCents)} — faltam ${formatBRL(falta)}`,
+    `postado em ${escapeHtml(post.postedAt.slice(0, 10))}`,
+    escapeHtml(tituloDoPost(post.text, 80)),
+  ];
+  if (post.productUrl) {
+    linhas.push(`<a href="${escapeHtml(post.productUrl)}">ir para a oferta</a>`);
+  }
+  linhas.push(
+    `<a href="${escapeHtml(post.url)}">ver post</a>`,
+    "",
+    "<i>Não é o preço que você pediu — é o mais perto que apareceu. Se quiser passar a ser avisado nessa faixa, refaça a caça com o alvo um pouco maior.</i>",
+  );
+  return linhas.join("\n");
+}
+
 export type CacaResumo = {
   label: string;
   priceMinCents: number;
@@ -567,7 +609,10 @@ export function formatCacas(itens: CacaResumo[]): string {
   const blocos = itens.map((c) => {
     const linhas = [
       `🎯 <b>${escapeHtml(c.label)}</b>`,
-      `   sua faixa: ${formatBRL(c.priceMinCents)} a ${formatBRL(c.priceMaxCents)}`,
+      // O que o usuário pediu é um TETO, não uma faixa. Mostrar "R$ 1.450 a
+      // R$ 3.190" confundia: o piso não é preferência dele, é só a guarda
+      // contra preço mal lido.
+      `   seu teto: ${formatBRL(c.priceMaxCents)}`,
     ];
     if (c.melhorAtualCents === null) {
       linhas.push(`   <i>nenhuma oferta encontrada em ${MESES_PADRAO} meses</i>`);
@@ -581,7 +626,7 @@ export function formatCacas(itens: CacaResumo[]): string {
         // discordarem sobre a mesma pergunta: a lista dizia que serve, o motor
         // de alerta excluía o mesmo preço.
         linhas.push(
-          `${prefixo} — <b>abaixo do seu piso</b>: barato demais pra ser o produto (costuma ser acessório), por isso não vira alerta`,
+          `${prefixo} — <b>barato demais pra ser o produto</b> (menos da metade do seu alvo): costuma ser acessório ou preço mal lido, por isso não vira alerta`,
         );
       } else if (c.melhorAtualCents <= c.priceMaxCents) {
         linhas.push(`${prefixo} — <b>já apareceu na sua faixa</b>`);
@@ -649,13 +694,17 @@ export function formatAjuda(): string {
     "1️⃣ qual produto",
     "2️⃣ <i>eu mostro quantas ofertas existem e a mediana</i>",
     "3️⃣ quanto você quer pagar",
-    "4️⃣ tolerância (botões de 5%, 10% e 15%, cada um mostrando a faixa em reais)",
+    "4️⃣ tolerância (botões de 5%, 10% e 15%) — é quanto <b>acima</b> do seu alvo você ainda aceita",
+    "",
+    "<i>Abaixo do alvo é sempre melhor, então não tem limite por baixo: só barro preço que é menos da metade do que você pediu, porque aí é acessório ou erro de leitura.</i>",
     "",
     "Depois disso eu te aviso sozinho quando aparecer na faixa. Não precisa ficar olhando.",
     "",
     "O aviso chega com a <b>foto do anúncio</b>, o preço, quanto está abaixo do seu teto <b>e da mediana do mercado</b>, o nome do produto e o link direto da oferta.",
     "<i>Só aviso de oferta recente (últimas 48h) — não adianta te mandar promoção que já acabou.</i>",
     "<i>Se você começar um /cacar e mandar outro comando no meio, eu cancelo a conversa e aviso.</i>",
+    "",
+    "<b>👀 Aviso de aproximação.</b> Se o preço chegar a até 8% acima do seu teto, eu te aviso mesmo sem ser o que você pediu — com outro tom, pra você não confundir com o alerta de verdade.",
     "",
     "<b>━━━ O melhor do dia ━━━</b>",
     "",

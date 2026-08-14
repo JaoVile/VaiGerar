@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { casa, faixaDe } from "@/lib/hunts/match";
+import { casa, casaPerto, faixaDe } from "@/lib/hunts/match";
 import { normalizar, variantes } from "@/lib/hunts/terms";
 
 describe("normalizar", () => {
@@ -64,5 +64,75 @@ describe("casa", () => {
   });
   it("recusa post sem preço", () => {
     expect(casa("Galaxy S25 Plus", null, hunt)).toBe(false);
+  });
+});
+
+describe("casaPerto — aviso de aproximação", () => {
+  // Existe porque as 6 caças reais tinham alvo 2% a 7% abaixo do que o mercado
+  // já praticou e passaram 3 meses sem disparar nenhuma vez. Sem o aviso o
+  // sistema fica mudo mesmo quando o preço encosta.
+  const h = {
+    ...hunt,
+    priceMinCents: 150000,
+    priceMaxCents: 300000,
+  };
+
+  it("preço até 8% acima do teto vira aviso", () => {
+    expect(casaPerto("Galaxy S25+ 256GB", 310000, h)).toBe(true);
+    // 300000 * 1,08 = 324000, o limite exato entra
+    expect(casaPerto("Galaxy S25+ 256GB", 324000, h)).toBe(true);
+  });
+
+  it("acima da margem não vira aviso", () => {
+    expect(casaPerto("Galaxy S25+ 256GB", 324001, h)).toBe(false);
+    expect(casaPerto("Galaxy S25+ 256GB", 400000, h)).toBe(false);
+  });
+
+  // Se está dentro da faixa é ALERTA, não aviso. As duas mensagens têm tom
+  // diferente e não podem sair as duas pro mesmo post.
+  it("preço dentro da faixa não é aviso", () => {
+    expect(casaPerto("Galaxy S25+ 256GB", 290000, h)).toBe(false);
+    expect(casa("Galaxy S25+ 256GB", 290000, h)).toBe(true);
+  });
+
+  // Preço mal lido é barrado por estar ABAIXO do teto, não pelo piso: o aviso
+  // só existe acima do teto. A primeira versão deste teste dizia que era o
+  // piso que barrava, e por isso passava mesmo com a checagem de piso apagada.
+  it("preço mal lido não vira aviso — está abaixo do teto, não acima", () => {
+    expect(casaPerto("Galaxy S25+ 256GB", 414, h)).toBe(false);
+    expect(casaPerto("Galaxy S25+ 256GB", h.priceMaxCents, h)).toBe(false);
+  });
+
+  it("aviso respeita os mesmos termos do alerta", () => {
+    expect(casaPerto("Capa para Galaxy S25+", 310000, h)).toBe(false);
+    expect(casaPerto("Galaxy S25 Ultra 512GB", 310000, { ...h, termsAny: ["galaxy s25"] })).toBe(
+      false,
+    );
+  });
+});
+
+describe("casa — piso de sanidade", () => {
+  // Um Galaxy S26 5G 256GB real saiu por R$ 2.579 em 25/05 e foi descartado
+  // porque o piso da caça era R$ 2.610. O usuário pediu R$ 2.900 — a oferta
+  // era R$ 321 MELHOR e o sistema ficou calado.
+  //
+  // A tolerância diz quanto ACIMA do alvo se aceita; abaixo é sempre melhor.
+  // O piso só existe pra barrar lixo.
+  const s26 = {
+    ...hunt,
+    label: "Galaxy S26",
+    termsAny: ["galaxy s26"],
+    priceMinCents: 145000,
+    priceMaxCents: 319000,
+  };
+
+  it("oferta melhor que o alvo entra em vez de ser rejeitada", () => {
+    expect(casa("Samsung Galaxy S26 5G 256GB 12GB RAM", 257900, s26)).toBe(true);
+  });
+
+  it("lixo continua barrado", () => {
+    // Capa de R$ 29 e preço mal lido de R$ 4,14 ficam fora do piso.
+    expect(casa("Samsung Galaxy S26 5G capinha", 2900, s26)).toBe(false);
+    expect(casa("Samsung Galaxy S26 5G 256GB", 414, s26)).toBe(false);
   });
 });

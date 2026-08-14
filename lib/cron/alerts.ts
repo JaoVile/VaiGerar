@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { formatBRL, tituloDoPost } from "@/lib/bot/format";
-import { casa, type Hunt } from "@/lib/hunts/match";
+import { formatAviso, formatBRL, tituloDoPost } from "@/lib/bot/format";
+import { casa, casaPerto, type Hunt } from "@/lib/hunts/match";
 import { buscar, MESES_PADRAO } from "@/lib/search/query";
 import type { PriceStats } from "@/lib/search/stats";
 import { escapeHtml, sendMessage, TelegramRateLimitError, sendPhoto } from "@/lib/telegram";
@@ -306,11 +306,15 @@ export async function processarAlertas(
       .limit(JANELA_POSTS);
     if (postErr) throw new Error(`Lendo posts para alerta: ${postErr.message}`);
 
-    const novos: Array<{ hunt_id: string; post_row_id: number }> = [];
+    const novos: Array<{ hunt_id: string; post_row_id: number; kind: string }> = [];
     for (const p of postRows ?? []) {
       for (const h of hunts) {
+        // Faixa antes de perto: um preço não pode ser os dois, mas checar
+        // nessa ordem deixa explícito qual manda se as regras se cruzarem.
         if (casa(p.text as string, p.price_cents as number, h)) {
-          novos.push({ hunt_id: h.id, post_row_id: p.id as number });
+          novos.push({ hunt_id: h.id, post_row_id: p.id as number, kind: "faixa" });
+        } else if (casaPerto(p.text as string, p.price_cents as number, h)) {
+          novos.push({ hunt_id: h.id, post_row_id: p.id as number, kind: "perto" });
         }
       }
     }
@@ -370,7 +374,7 @@ export async function processarAlertas(
 
   const { data: pendentes, error: pendErr } = await db
     .from("alerts")
-    .select("id,hunt_id,post_row_id,attempts")
+    .select("id,hunt_id,post_row_id,attempts,kind")
     .is("sent_at", null)
     .lt("attempts", MAX_TENTATIVAS)
     .or(livre)
@@ -433,6 +437,7 @@ async function processarUmAlerta(
     hunt_id: string;
     post_row_id: number;
     attempts: number | null;
+    kind?: string | null;
   },
   agora: Date,
   leaseCutoffIso: string,
@@ -485,6 +490,28 @@ async function processarUmAlerta(
     if (!hRow || !pRow) throw new Error("caça ou post sumiu");
 
     const hunt = toHunt(hRow);
+    const post = {
+      priceCents: pRow.price_cents as number,
+      store: pRow.store as string | null,
+      url: pRow.url as string,
+      productUrl: (pRow.product_url as string | null) ?? null,
+      text: pRow.text as string,
+      postedAt: pRow.posted_at as string,
+    };
+
+    // Aviso de aproximação sai sem estatística de mercado: ele não afirma que
+    // é bom negócio, só que encostou no teto. Buscar a mediana aqui gastaria
+    // uma consulta por uma linha que a mensagem nem usa.
+    if (a.kind === "perto") {
+      const aviso = formatAviso(hunt.label, hunt.priceMaxCents, post);
+      await enfileirar(hunt.chatId, async () => {
+        if (decorridoMs() > orcamentoMs) throw new PrazoEstouradoError();
+        await sendMessage(token, hunt.chatId, aviso);
+      });
+      await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
+      return "enviado";
+    }
+
     const stats = await statsDaCaca(db, hunt, statsPorHunt);
     const texto = formatAlerta(
       hunt,

@@ -19,8 +19,27 @@ export type AlertPost = {
 };
 
 const MAX_TENTATIVAS = 5;
-/** Teto de posts que o casamento examina por tick, dentro da janela de data. */
-const JANELA_POSTS = 500;
+/**
+ * Teto de linhas da consulta de casamento.
+ *
+ * **É guarda contra consulta desgovernada, não amostragem.** Se ele truncar, a
+ * varredura perde parte da janela em silêncio — e isso já aconteceu três vezes
+ * nesta base, sempre pelo mesmo motivo: o teto foi dimensionado por chute e a
+ * janela cresceu por baixo dele.
+ *
+ * O caso de 13/08: uma caça recém-criada (marca d'água 0) varre as 48h
+ * inteiras. Com 500, a varredura leu **500 de 2.101 posts — 24% da janela** —
+ * e o post que deveria virar aviso ficou de fora.
+ *
+ * Dimensionado pela janela e não por gosto: as últimas 48h têm ~3.700 posts
+ * com preço no ritmo de 13/08. 5.000 cobre com folga, e o custo só é pago na
+ * varredura completa, que acontece quando uma caça nasce. No tick normal a
+ * marca d'água mantém a leitura em ~100 linhas.
+ *
+ * **Se o catálogo crescer muito, refaça essa conta.** O aviso de truncamento
+ * abaixo existe pra isso não passar despercebido de novo.
+ */
+export const JANELA_POSTS = 5000;
 /**
  * Idade máxima do post que ainda pode virar alerta.
  *
@@ -305,6 +324,14 @@ export async function processarAlertas(
       .order("id", { ascending: false })
       .limit(JANELA_POSTS);
     if (postErr) throw new Error(`Lendo posts para alerta: ${postErr.message}`);
+
+    // Truncou. Não dá pra saber o que ficou de fora, mas dá pra parar de
+    // perder isso em silêncio — foi assim que a janela encolheu três vezes.
+    if ((postRows ?? []).length >= JANELA_POSTS) {
+      console.warn(
+        `Varredura de alerta atingiu o teto de ${JANELA_POSTS} linhas: parte da janela de ${JANELA_HORAS}h não foi examinada. Reveja JANELA_POSTS.`,
+      );
+    }
 
     const novos: Array<{ hunt_id: string; post_row_id: number; kind: string }> = [];
     for (const p of postRows ?? []) {

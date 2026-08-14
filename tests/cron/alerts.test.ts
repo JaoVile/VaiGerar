@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatBRL } from "@/lib/bot/format";
-import { formatAlerta, processarAlertas } from "@/lib/cron/alerts";
+import { formatAlerta, JANELA_POSTS, processarAlertas } from "@/lib/cron/alerts";
 import { TelegramRateLimitError } from "@/lib/telegram";
 import { argsDe, createQueryFake, todasAsChamadas } from "@/tests/helpers/fake-db";
 
@@ -189,7 +189,7 @@ describe("processarAlertas — janela de casamento", () => {
     // `id` é bigserial (ordem de gravação), não de publicação: sem este piso
     // o backfill injetava post de março na janela como se fosse recente.
     expect(argsDe(janela, "gte")).toEqual(["posted_at", "2026-08-09T12:00:00.000Z"]);
-    expect(argsDe(janela, "limit")).toEqual([500]);
+    expect(argsDe(janela, "limit")).toEqual([JANELA_POSTS]);
   });
 
   it("conta em `casados` só as linhas realmente inseridas, não a janela toda", async () => {
@@ -691,5 +691,22 @@ describe("aviso de aproximação", () => {
     const db = cenario({ posts: [{ ...postRow, price_cents: 500000 }] });
     const r = await processarAlertas(db.client, "tok", AGORA);
     expect(r.casados).toBe(0);
+  });
+});
+
+describe("teto de linhas da varredura", () => {
+  // Isto já mordeu três vezes, sempre igual: o teto é dimensionado por chute,
+  // a janela cresce por baixo dele e a varredura passa a perder parte do
+  // período em silêncio.
+  //
+  // O caso de 13/08: caça recém-criada varre as 48h inteiras e leu 500 de
+  // 2.101 posts — 24% da janela. O post que deveria virar aviso ficou fora.
+  //
+  // Este teste não sabe o volume de produção, então cobra a folga contra o
+  // volume MEDIDO: ~3.700 posts com preço nas últimas 48h em 13/08. Se alguém
+  // baixar o teto pra perto disso, fica vermelho.
+  it("o teto cobre uma janela de 48h com folga", () => {
+    const postsEm48hMedido = 3700;
+    expect(JANELA_POSTS).toBeGreaterThan(postsEm48hMedido);
   });
 });

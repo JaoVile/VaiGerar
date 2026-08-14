@@ -19,6 +19,7 @@ export function toPostRows(posts: ParsedPost[], slug: string): PostRow[] {
     prices_cents: p.pricesCents,
     store: p.store,
     product_url: p.productUrl,
+    photo_url: p.photoUrl,
   }));
 }
 

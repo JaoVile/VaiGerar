@@ -6,10 +6,14 @@ import { argsDe, createQueryFake, todasAsChamadas } from "@/tests/helpers/fake-d
 
 // Só o I/O do Telegram é mockado; `escapeHtml` e `TelegramRateLimitError`
 // continuam reais.
-const { sendMessageMock } = vi.hoisted(() => ({ sendMessageMock: vi.fn() }));
+const { sendMessageMock, sendPhotoMock } = vi.hoisted(() => ({
+  sendMessageMock: vi.fn(),
+  sendPhotoMock: vi.fn(),
+}));
 vi.mock("@/lib/telegram", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/telegram")>()),
   sendMessage: sendMessageMock,
+  sendPhoto: sendPhotoMock,
 }));
 
 const hunt = {
@@ -30,6 +34,7 @@ const post = {
   store: "amazon",
   url: "https://t.me/x/1",
   productUrl: "https://amzn.to/abc",
+  photoUrl: null,
   postedAt: "2026-08-10T15:00:00Z",
 };
 
@@ -156,12 +161,13 @@ function cenario(
     pendentes?: Record<string, unknown>[];
     inseridos?: Record<string, unknown>[];
     hunts?: Record<string, unknown>[];
+    posts?: Record<string, unknown>[];
   } = {},
 ) {
   return createQueryFake({
     select: {
       hunts: over.hunts ?? [huntRow],
-      posts: [postRow],
+      posts: over.posts ?? [postRow],
       alerts: over.pendentes ?? [pendente],
     },
     // O `update` de alerts responde ao claim; `[{id}]` = claim ganho.
@@ -568,5 +574,69 @@ describe("processarAlertas — mediana de mercado (wiring)", () => {
     // preço do alerta 289900 contra 396800 → 27% abaixo.
     expect(html.toLowerCase()).toContain("mediana");
     expect(html).toMatch(/27%/);
+  });
+});
+
+describe("alerta com foto", () => {
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+    sendPhotoMock.mockReset();
+  });
+
+  const comFoto = { ...postRow, photo_url: "https://cdn1.telesco.pe/file/abc.jpg" };
+
+  // Medido sobre 300 alertas reais: mediana de 330 caracteres e máximo de 427,
+  // contra o limite de 1024 da legenda. Cabe em 100% dos casos — é por isso
+  // que a imagem entra aqui e não no /agora, que junta cinco ofertas.
+  it("post com foto vira sendPhoto, com o alerta de legenda", async () => {
+    const db = cenario({ posts: [comFoto] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    const [, , foto, legenda] = sendPhotoMock.mock.calls[0];
+    expect(foto).toBe("https://cdn1.telesco.pe/file/abc.jpg");
+    expect(legenda).toContain("R$ 2.899,00");
+  });
+
+  it("post sem foto continua em texto", async () => {
+    const db = cenario();
+    await processarAlertas(db.client, "tok", AGORA);
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+  });
+
+  // O que mais importa desta rodada: a imagem é enfeite, o alerta é o produto.
+  // URL do CDN pode expirar, o Telegram pode recusar o formato, o host pode
+  // cair — em nenhum desses casos o alerta pode se perder.
+  it("foto que falha não perde o alerta: cai pra texto", async () => {
+    sendPhotoMock.mockRejectedValueOnce(new Error("Telegram sendPhoto: HTTP 400 wrong file"));
+    const db = cenario({ posts: [comFoto] });
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(r.enviados).toBe(1);
+    expect(r.falhos).toBe(0);
+  });
+
+  // 429 é exceção à exceção: é ritmo, não problema da imagem, e tem tratamento
+  // próprio (devolve a linha à fila). Reenviar como texto furaria isso e
+  // ainda pioraria a rajada.
+  it("429 na foto não vira reenvio como texto", async () => {
+    sendPhotoMock.mockRejectedValueOnce(new TelegramRateLimitError("sendPhoto", 30, "{}"));
+    const db = cenario({ posts: [comFoto] });
+    const r = await processarAlertas(db.client, "tok", AGORA);
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(r.enviados).toBe(0);
+  });
+
+  it("lê a coluna photo_url do banco", async () => {
+    const db = cenario({ posts: [comFoto] });
+    await processarAlertas(db.client, "tok", AGORA);
+
+    const selects = db.de("select", "posts").map((q) => argsDe(q, "select")?.[0]);
+    expect(selects.some((s) => String(s).includes("photo_url"))).toBe(true);
   });
 });

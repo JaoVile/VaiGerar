@@ -21,6 +21,7 @@ const post = (postId: number, postedAt: string): ParsedPost => ({
   pricesCents: [],
   store: null,
   productUrl: null,
+  photoUrl: null,
 });
 
 afterEach(() => {

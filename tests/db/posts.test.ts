@@ -10,6 +10,7 @@ const post = (postId: number, over: Partial<ParsedPost> = {}): ParsedPost => ({
   priceCents: 309900,
   pricesCents: [309900],
   store: "amazon",
+  photoUrl: null,
   productUrl: "https://link.amazon/x",
   ...over,
 });
@@ -32,6 +33,7 @@ describe("toPostRows", () => {
     const [row] = toPostRows([post(7)], "gtOFERTAS");
     expect(row).toEqual({
       channel_slug: "gtOFERTAS",
+      photo_url: null,
       post_id: 7,
       posted_at: "2026-08-03T19:18:15.000Z",
       text: "Galaxy S25+ por R$ 3.099,00",

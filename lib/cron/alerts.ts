@@ -3,7 +3,7 @@ import { formatBRL, tituloDoPost } from "@/lib/bot/format";
 import { casa, type Hunt } from "@/lib/hunts/match";
 import { buscar, MESES_PADRAO } from "@/lib/search/query";
 import type { PriceStats } from "@/lib/search/stats";
-import { escapeHtml, sendMessage, TelegramRateLimitError } from "@/lib/telegram";
+import { escapeHtml, sendMessage, TelegramRateLimitError, sendPhoto } from "@/lib/telegram";
 
 export type AlertPost = {
   rowId: number;
@@ -13,6 +13,8 @@ export type AlertPost = {
   url: string;
   /** Link direto da oferta. Nem todo post tem — canal só de cupom, por exemplo. */
   productUrl: string | null;
+  /** Foto do anúncio. `null` em post só de texto e em post anterior à 0007. */
+  photoUrl: string | null;
   postedAt: string;
 };
 
@@ -477,7 +479,7 @@ async function processarUmAlerta(
     const { data: hRow } = await db.from("hunts").select("*").eq("id", a.hunt_id).single();
     const { data: pRow } = await db
       .from("posts")
-      .select("id,text,price_cents,store,url,product_url,posted_at")
+      .select("id,text,price_cents,store,url,product_url,photo_url,posted_at")
       .eq("id", a.post_row_id)
       .single();
     if (!hRow || !pRow) throw new Error("caça ou post sumiu");
@@ -493,6 +495,7 @@ async function processarUmAlerta(
         store: pRow.store as string | null,
         url: pRow.url as string,
         productUrl: (pRow.product_url as string | null) ?? null,
+        photoUrl: (pRow.photo_url as string | null) ?? null,
         postedAt: pRow.posted_at as string,
       },
       stats,
@@ -501,9 +504,30 @@ async function processarUmAlerta(
     // roda quando a entrega anterior do mesmo chat terminou — é o único ponto
     // do caminho onde o relógio já andou. Checar aqui é o que transforma o
     // orçamento em algo que o relógio real produz.
-    await enfileirar(hunt.chatId, () => {
+    const foto = (pRow.photo_url as string | null) ?? null;
+    await enfileirar(hunt.chatId, async () => {
       if (decorridoMs() > orcamentoMs) throw new PrazoEstouradoError();
-      return sendMessage(token, hunt.chatId, texto);
+      if (foto === null) {
+        await sendMessage(token, hunt.chatId, texto);
+        return;
+      }
+      try {
+        await sendPhoto(token, hunt.chatId, foto, texto);
+      } catch (e) {
+        // A imagem é enfeite; o alerta é o produto. URL do CDN pode ter
+        // expirado, o Telegram pode recusar o formato, o host pode estar fora
+        // — em qualquer desses casos o alerta ainda tem que chegar, então cai
+        // pra texto em vez de deixar a exceção subir.
+        //
+        // 429 é exceção à exceção: é ritmo, não problema da imagem, e tem
+        // tratamento próprio lá em cima (devolve a linha à fila). Reenviar
+        // como texto aqui furaria esse tratamento.
+        if (e instanceof TelegramRateLimitError) throw e;
+        console.warn(
+          `Foto do alerta falhou, mandando texto: ${e instanceof Error ? e.message : e}`,
+        );
+        await sendMessage(token, hunt.chatId, texto);
+      }
     });
     await db.from("alerts").update({ sent_at: agora.toISOString() }).eq("id", a.id);
     await db.from("hunts").update({ last_alert_at: agora.toISOString() }).eq("id", hunt.id);

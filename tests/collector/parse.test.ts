@@ -121,3 +121,31 @@ describe("parseChannelPage — guardas que protegem o lote", () => {
     expect(posts[0].priceCents).toBeNull();
   });
 });
+
+describe("parseChannelPage — foto do anúncio", () => {
+  // Medido em 100 posts de 5 canais: 98% têm foto. As duas fixtures reais
+  // deste repositório têm 20 wrappers de foto cada.
+  it("extrai a URL da foto dos posts reais", () => {
+    const posts = parseChannelPage(fixture("gtOFERTAS.html"), "gtOFERTAS");
+    const comFoto = posts.filter((p) => p.photoUrl !== null);
+
+    expect(comFoto.length).toBeGreaterThanOrEqual(posts.length / 2);
+    for (const p of comFoto) {
+      expect(p.photoUrl).toMatch(/^https:\/\/cdn\d*\.telesco\.pe\/file\//);
+    }
+  });
+
+  it("a mesma foto não é repetida em posts diferentes", () => {
+    // A foto sai do `chunk` do post, não da página inteira. Se saísse da
+    // página, todos os posts levariam a primeira imagem.
+    const posts = parseChannelPage(fixture("ctofertascelulares.html"), "ctofertascelulares");
+    const urls = posts.map((p) => p.photoUrl).filter((u): u is string => u !== null);
+
+    expect(new Set(urls).size).toBe(urls.length);
+  });
+
+  it("post sem foto fica com null, não com string vazia", () => {
+    const html = paginaComPosts([{ id: 1, datetime: OK, texto: "Air Fryer por R$ 299,00" }]);
+    expect(parseChannelPage(html, "canal")[0].photoUrl).toBeNull();
+  });
+});

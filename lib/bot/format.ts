@@ -653,7 +653,7 @@ export function formatAjuda(): string {
     "",
     "Depois disso eu te aviso sozinho quando aparecer na faixa. Não precisa ficar olhando.",
     "",
-    "O aviso chega com o preço, quanto está abaixo do seu teto <b>e da mediana do mercado</b>, o nome do produto e o link direto da oferta.",
+    "O aviso chega com a <b>foto do anúncio</b>, o preço, quanto está abaixo do seu teto <b>e da mediana do mercado</b>, o nome do produto e o link direto da oferta.",
     "<i>Só aviso de oferta recente (últimas 48h) — não adianta te mandar promoção que já acabou.</i>",
     "<i>Se você começar um /cacar e mandar outro comando no meio, eu cancelo a conversa e aviso.</i>",
     "",

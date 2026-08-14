@@ -86,6 +86,32 @@ export async function sendMessage(
   });
 }
 
+/**
+ * Manda a foto do anúncio com o texto como legenda.
+ *
+ * Duas coisas o Telegram impõe e que o desenho respeita:
+ *
+ * - **Legenda tem 1024 caracteres**, contra 4096 do texto. Medido sobre 300
+ *   alertas reais em 13/08: mediana de 330 e **máximo de 427** — cabe com
+ *   folga. É por isso que a imagem entra no alerta e não no `/agora`, que
+ *   mostra cinco ofertas numa mensagem só.
+ * - **A imagem é buscada pelo próprio Telegram** a partir da URL. Nada de
+ *   imagem trafega por este servidor.
+ */
+export async function sendPhoto(
+  token: string,
+  chatId: number,
+  photoUrl: string,
+  caption: string,
+): Promise<void> {
+  await chamar(token, "sendPhoto", {
+    chat_id: chatId,
+    photo: photoUrl,
+    caption,
+    parse_mode: "HTML",
+  });
+}
+
 export async function editMessageText(
   token: string,
   chatId: number,

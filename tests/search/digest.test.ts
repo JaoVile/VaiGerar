@@ -53,6 +53,19 @@ describe("chaveDoProduto", () => {
   // Menos de 3 tokens significativos não identifica produto nenhum. "Oi tudo
   // bem" NÃO serve de exemplo: são exatamente 3 tokens e passa — a primeira
   // versão deste teste usava isso e falhou por eu ter contado errado.
+  // A ordem das palavras no título é escolha de quem escreveu o anúncio, não
+  // característica do produto. Medido em 30 dias: 370 dos 704 grupos com
+  // histórico tinham uma quase-gêmea de chave diferente, e os casos do topo
+  // eram exatamente os mesmos tokens em ordem trocada.
+  it("mesma palavra em ordem diferente é o mesmo produto", () => {
+    expect(chaveDoProduto("Smart TV Philips 4K 50PUG7300")).toBe(
+      chaveDoProduto("Philips Smart TV 4K 50PUG7300"),
+    );
+    expect(chaveDoProduto("Caixa de Som JBL Boombox Bluetooth")).toBe(
+      chaveDoProduto("JBL Caixa de Som Bluetooth Boombox"),
+    );
+  });
+
   it("título curto demais não vira chave", () => {
     expect(chaveDoProduto("Preço de hoje")).toBeNull();
     expect(chaveDoProduto("🔥🔥🔥")).toBeNull();

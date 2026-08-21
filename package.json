@@ -1,7 +1,7 @@
 {
   "name": "cacador-ofertas",
   "version": "1.0.0",
-  "description": "",
+  "description": "Deal hunter: collects Telegram promo channels, archives to Postgres, alerts when a product hits your price floor",
   "main": "index.js",
   "scripts": {
     "dev": "next dev -p 3010",
@@ -12,8 +12,8 @@
     "check": "biome check --write ."
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "João Vilela",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.112.0",

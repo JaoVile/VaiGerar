@@ -2,6 +2,9 @@
 
 # VaiGerar — deal hunter
 
+**Run dashboard:** [vai-gerar.vercel.app](https://vai-gerar.vercel.app) —
+password-gated, see [Run dashboard](#run-dashboard) below.
+
 Collects promo posts from public Telegram channels, archives them in Postgres,
 and alerts you on Telegram when a product you are watching drops into your
 price range.
@@ -10,7 +13,7 @@ The point is not "another deals feed". It is a **price floor with memory**:
 every post is archived, so a new offer is judged against the historical median
 for that product — not against whatever the channel calls a discount today.
 
-**Stack** — Next.js 15 (App Router, API routes only) · TypeScript · Supabase
+**Stack** — Next.js 15 (App Router; API routes plus the run dashboard) · TypeScript · Supabase
 (Postgres) · Telegram Bot API · Vitest · Biome. No server to keep alive: the
 whole thing runs on serverless routes driven by an external cron.
 
@@ -49,7 +52,7 @@ price, help).
 - `docs/OPERATIONS.md` — the runbook: env vars, cron scheduling, migrations,
   what to do when the canary lights up.
 
-28 test files under `tests/`, mirroring the `lib/` layout.
+30 test files / 476 tests under `tests/`, mirroring the `lib/` layout.
 
 ## Running it
 
@@ -66,6 +69,8 @@ Environment variables and where to get each one are documented in
 `supabase/migrations/`, numbered and applied in order.
 
 ## Run dashboard
+
+**Live:** [vai-gerar.vercel.app](https://vai-gerar.vercel.app)
 
 `/` is the cron execution log: one row per run, what each channel returned,
 what made it into the database, and how many alerts went out.
@@ -92,6 +97,9 @@ signed cookie, good for 12 hours, with no server-side state.
 "Parado" outranking green is the point: an `ok` run from three hours ago is not
 good news, it is the last thing that worked before the scheduler stopped. If
 green won, the quietest failure mode in the system would read as "all fine".
+
+Measured in production on 2026-08-21: 25 active channels, ~500 posts read and
+11–15 new ones stored per run, one run every 5 minutes, 2–3 s per run.
 
 Run log retention is 14 days, purged alongside posts by `/api/cron/purge` —
 deliberately shorter than the post archive, which has to stay searchable for

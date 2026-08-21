@@ -48,6 +48,47 @@ Exceção registrada: `0002_seed_channels.sql` foi aplicada nesta task via
 true`) em vez do SQL Editor — mesmo efeito de `on conflict do nothing`,
 seguro pra rodar de novo (idempotente).
 
+## Cadastrar e remover canal pelo painel
+
+Desde a `0010_limites_e_canais.sql` o cadastro de canal não passa mais por
+migration. No painel, seção **Canais**: cola o link (`t.me/nome`, `@nome` ou o
+slug), clica em *verificar* e o servidor busca a página pública do canal e roda
+**o parser real do projeto** nela. A tela mostra posts/dia estimado, quantos
+posts têm preço legível, a mediana lida, uma amostra do que o parser extraiu e
+quanto do plano free o canal ocuparia no platô.
+
+O que é recusado, e por quê:
+
+| Sintoma | O que é | Dá pra forçar? |
+| :-- | :-- | :-- |
+| `sem-preview` | Canal privado, grupo ou slug errado. `t.me/s/<slug>` redireciona pro cartão de contato e o coletor não tem o que ler | Não |
+| `sem-posts` | A página abre mas o parser não achou post — canal vazio, ou o t.me mudou o HTML (mesmo sinal do canário) | Não |
+| Quase nenhum post com preço | Normalmente canal de cupom. O parser descarta valor de desconto de propósito (correção de 10/08), então esse canal entra e nunca casa uma caça | Sim, com *cadastrar mesmo assim* |
+
+Canal com mais de ~150 posts/dia entra marcado como **só daqui pra frente**
+(sem backfill), pelo mesmo motivo da `0003`: importar 6 meses de um canal
+pesado são dezenas de milhares de linhas de uma vez.
+
+**Desativar** para a coleta e mantém o arquivo. **Remover** apaga o canal *e*
+todos os posts dele — inclusive o histórico que a busca e a mediana usam. A
+remoção vai em lotes de 500 (o PostgREST ignora `limit` em DELETE, ver o
+cabeçalho de `purgarLote`) e o canal só sai depois que os posts acabam; se a
+rota estourar o tempo no meio, a interface chama de novo até terminar.
+
+## Ler os limites no painel
+
+- **Disco — plano free**: a barra tem duas marcas, quanto o banco ocupa hoje e
+  o **platô projetado** (posts/dia x 90 dias x bytes por post, medidos). O
+  segundo é o que decide se cabe canal novo: arquivo de três dias ocupa pouco e
+  mesmo assim pode estar a caminho de estourar. A risca âmbar é o alvo de 60%.
+- **Faixas das caças**: piso, alvo, teto e o menor preço **de pé agora** pela
+  mesma regra do motor de alerta. É onde se vê que a caça não dispara porque o
+  mercado está X% acima do teto, e não porque o alerta quebrou. Sem `chat_id`:
+  a vista `hunt_faixas` não expõe de quem é a caça.
+- **Limites da coleta**: o alarme sai da **pior rodada** da janela, não do p95.
+  Com 120 rodadas, a que quase estourou os 60s é exatamente a que o p95
+  descarta — e a Vercel corta a requisição sem deixar linha no log.
+
 ## Quando `/api/cron/tick` devolve 500 com `CANÁRIO`
 
 Se o log do servidor mostrar `CANÁRIO: nenhum canal devolveu post` e a

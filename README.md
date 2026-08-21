@@ -23,7 +23,7 @@ whole thing runs on serverless routes driven by an external cron.
 Telegram channels (public t.me pages)
         │  scrape + parse (price, coupon, store)
         ▼
-   Postgres (Supabase) ── 8 migrations, 3-month rolling retention
+   Postgres (Supabase) ── 10 migrations, 3-month rolling retention
         │  hunts: term matching + median-as-a-ruler
         ▼
    Telegram bot ── alert when price ≤ your floor
@@ -81,7 +81,8 @@ which expires and cannot be compared across runs. So "how many days has this
 channel been returning zero?" had no answer. That is precisely the question the
 tick's canary exists to raise.
 
-Apply `supabase/migrations/0009_tick_runs.sql` before using it, and set
+Apply `supabase/migrations/0009_tick_runs.sql` and
+`0010_limites_e_canais.sql` before using it, and set
 `DASHBOARD_PASSWORD`. Without that variable the dashboard refuses to serve in
 production rather than opening to everyone — this repository is public and the
 screen shows error messages from a live system. The session is an HMAC-SHA256
@@ -93,6 +94,10 @@ signed cookie, good for 12 hours, with no server-side state.
 | Did the scheduler die? | "Parado" outranks a green last run |
 | Which channel broke, and with what error? | Expand the run's row |
 | Which channel stopped bringing anything new? | "Canais — últimas 24 h" |
+| Is there room for another channel? | "Disco — plano free": projected plateau, not today's size |
+| Why has this hunt never fired? | "Faixas das caças": floor, target, ceiling, and the lowest price standing right now |
+| Is the tick about to hit the route's 60 s ceiling? | "Limites da coleta" |
+| Add or remove a channel | "Canais" — paste the `t.me` link, read the preview, confirm |
 
 "Parado" outranking green is the point: an `ok` run from three hours ago is not
 good news, it is the last thing that worked before the scheduler stopped. If
@@ -100,6 +105,17 @@ green won, the quietest failure mode in the system would read as "all fine".
 
 Measured in production on 2026-08-21: 25 active channels, ~500 posts read and
 11–15 new ones stored per run, one run every 5 minutes, 2–3 s per run.
+
+Adding a channel runs the project's own parser against the channel's public
+preview first and shows what it read: posts per day, share of posts with a
+readable price, the median, and how much of the free plan the channel would
+take at the plateau. The check is repeated server-side on save — the client
+sends a slug, never a verdict. This is the same work the 0006 expansion did by
+hand, where 6 of 24 candidates were dead and 5 were coupon channels.
+
+Removing a channel deletes its posts in batches and only then the channel row,
+so a removal cut short by the route's time limit leaves a registered channel,
+never an orphan.
 
 Run log retention is 14 days, purged alongside posts by `/api/cron/purge` —
 deliberately shorter than the post archive, which has to stay searchable for

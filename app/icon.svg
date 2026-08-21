@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Caçador de Ofertas">
+  <!-- Retículo com o preço caindo até o piso. É literalmente o que o sistema
+       faz: mira um produto e espera o preço encostar na faixa.
+       Sem etiqueta de preço nem cifrão — a 16px qualquer forma com furo,
+       curva ou serifa vira borrão. Só traços retos e grossos sobrevivem. -->
+  <rect width="32" height="32" rx="7" fill="#090f11"/>
+
+  <!-- Mira: só os traços laterais. O anel a 16px vira um miolo cinza, e o
+       traço de cima foi cortado porque encostava na seta e os dois viravam
+       uma barra vertical só — verificado renderizando a 16px. -->
+  <g stroke="#48b9c7" stroke-width="2.6" stroke-linecap="round">
+    <path d="M3 15h5M29 15h-5"/>
+  </g>
+
+  <!-- Queda do preço. -->
+  <g stroke="#ffa13e" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M16 6v11"/>
+    <path d="M10.6 12.4l5.4 5.4 5.4-5.4"/>
+  </g>
+
+  <!-- O piso da faixa: onde a queda para de ser boa notícia e vira alerta. -->
+  <path d="M8 25h16" stroke="#48b9c7" stroke-width="3" stroke-linecap="round"/>
+</svg>

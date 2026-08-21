@@ -1,3 +1,5 @@
+[![CI](https://github.com/JaoVile/VaiGerar/actions/workflows/ci.yml/badge.svg)](https://github.com/JaoVile/VaiGerar/actions/workflows/ci.yml)
+
 # VaiGerar — deal hunter
 
 Collects promo posts from public Telegram channels, archives them in Postgres,

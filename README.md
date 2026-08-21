@@ -65,6 +65,38 @@ Environment variables and where to get each one are documented in
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Migrations live in
 `supabase/migrations/`, numbered and applied in order.
 
+## Run dashboard
+
+`/` is the cron execution log: one row per run, what each channel returned,
+what made it into the database, and how many alerts went out.
+
+Before this the tick report existed in two places that both forget — the JSON
+handed back to the scheduler, which nobody reads, and Vercel's `console.error`,
+which expires and cannot be compared across runs. So "how many days has this
+channel been returning zero?" had no answer. That is precisely the question the
+tick's canary exists to raise.
+
+Apply `supabase/migrations/0009_tick_runs.sql` before using it, and set
+`DASHBOARD_PASSWORD`. Without that variable the dashboard refuses to serve in
+production rather than opening to everyone — this repository is public and the
+screen shows error messages from a live system. The session is an HMAC-SHA256
+signed cookie, good for 12 hours, with no server-side state.
+
+| Question | Where it is answered |
+| :-- | :-- |
+| Is it collecting right now? | The "Coletor" band at the top |
+| Did the scheduler die? | "Parado" outranks a green last run |
+| Which channel broke, and with what error? | Expand the run's row |
+| Which channel stopped bringing anything new? | "Canais — últimas 24 h" |
+
+"Parado" outranking green is the point: an `ok` run from three hours ago is not
+good news, it is the last thing that worked before the scheduler stopped. If
+green won, the quietest failure mode in the system would read as "all fine".
+
+Run log retention is 14 days, purged alongside posts by `/api/cron/purge` —
+deliberately shorter than the post archive, which has to stay searchable for
+three months. A run log has answered everything it can well before that.
+
 ## Status
 
 Collector, parsing, hunts and the Telegram bot are built and tested.

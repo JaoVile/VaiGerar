@@ -1,0 +1,350 @@
+/* Sem Tailwind de propósito: o projeto é headless e ganhou uma página só.
+   Uma folha de estilo resolve; um build de CSS a mais, não. */
+
+:root {
+  --ink: #0d1417;
+  --ink-deep: #090f11;
+  --panel: #121b1f;
+  --panel-hi: #17232a;
+  --rule: #22323a;
+  --rule-hi: #334a55;
+
+  --bone: #e7eef1;
+  --mute: #7d939e;
+  --faint: #55686f;
+
+  --signal: #48b9c7;
+  --ember: #ffa13e;
+  --ok: #5fd08a;
+  --warn: #ffa13e;
+  --crit: #ff6b5e;
+
+  --mono: ui-monospace, "JetBrains Mono", "IBM Plex Mono", "SF Mono", Menlo, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-color: var(--rule);
+}
+
+body {
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--signal);
+}
+::selection {
+  background: var(--signal);
+  color: var(--ink-deep);
+}
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 20px 72px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+.dot-ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgb(95 208 138 / 0.15);
+}
+.dot-degraded {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px rgb(255 161 62 / 0.15);
+}
+.dot-canary {
+  background: var(--crit);
+  box-shadow: 0 0 0 3px rgb(255 107 94 / 0.15);
+}
+.dot-error {
+  background: var(--crit);
+  box-shadow: 0 0 0 3px rgb(255 107 94 / 0.15);
+}
+.dot-idle {
+  background: var(--faint);
+}
+
+.panel {
+  border: 1px solid var(--rule);
+  background: rgb(18 27 31 / 0.6);
+}
+.panel > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.panel > .body {
+  padding: 16px 14px;
+}
+
+/* ── Cabeçalho ─────────────────────────────────────────── */
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 18px 28px;
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--rule);
+}
+.head h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.head .sub {
+  color: var(--mute);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+/* ── Grade de números ──────────────────────────────────── */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 14px 22px;
+}
+.figure {
+  border-top: 1px solid var(--rule);
+  padding-top: 9px;
+}
+.figure .v {
+  font-family: var(--mono);
+  font-size: 25px;
+  line-height: 1;
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+}
+.figure .v.warn {
+  color: var(--warn);
+}
+.figure .v.crit {
+  color: var(--crit);
+}
+.figure .v small {
+  font-size: 11px;
+  color: var(--faint);
+  margin-left: 4px;
+}
+.figure .k {
+  margin-top: 7px;
+}
+
+/* ── Faixa de rodadas ──────────────────────────────────── */
+
+.strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 76px;
+  padding: 0 2px;
+  overflow-x: auto;
+}
+.strip .bar {
+  flex: 1 0 6px;
+  min-width: 6px;
+  min-height: 3px;
+  background: var(--rule-hi);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+.strip .bar:hover {
+  filter: brightness(1.6);
+}
+.strip .bar.ok {
+  background: var(--signal);
+}
+.strip .bar.degraded {
+  background: var(--warn);
+}
+.strip .bar.canary,
+.strip .bar.error {
+  background: var(--crit);
+}
+.strip .bar[aria-pressed="true"] {
+  outline: 1px solid var(--bone);
+  outline-offset: 1px;
+}
+
+/* ── Tabela ────────────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+td {
+  padding: 9px 12px 9px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+td.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+td.dim {
+  color: var(--faint);
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+.scroll-x table {
+  min-width: 720px;
+}
+
+.err {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--crit);
+  word-break: break-word;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  border: 1px solid var(--rule);
+  padding: 2px 6px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.chip.zero {
+  color: var(--faint);
+}
+.chip.bad {
+  border-color: var(--crit);
+  color: var(--crit);
+}
+.chip.good {
+  border-color: var(--rule-hi);
+  color: var(--signal);
+}
+
+.grid-2 {
+  display: grid;
+  gap: 16px;
+}
+@media (min-width: 900px) {
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--mute);
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--rule-hi);
+  color: var(--bone);
+}
+.btn[aria-pressed="true"] {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.empty {
+  color: var(--mute);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+.empty code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--ink-deep);
+  border: 1px solid var(--rule);
+  padding: 1px 5px;
+}
+
+/* ── Login ─────────────────────────────────────────────── */
+
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.login form {
+  width: 100%;
+  max-width: 340px;
+}
+.login input {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 14px;
+  background: var(--ink-deep);
+  color: var(--bone);
+  border: 1px solid var(--rule);
+  padding: 10px 12px;
+  margin: 14px 0 12px;
+}
+.login .btn {
+  width: 100%;
+}

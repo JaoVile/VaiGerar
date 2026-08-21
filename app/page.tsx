@@ -1,7 +1,17 @@
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { Canais } from "@/components/Canais";
+import { Cacas, Coleta, Disco } from "@/components/Limites";
 import { Rodadas } from "@/components/Rodadas";
 import { createDb } from "@/lib/db/client";
+import {
+  type ChannelFootprint,
+  type HuntFaixa,
+  readArchiveUsage,
+  readChannelFootprint,
+  readHuntFaixas,
+} from "@/lib/db/limites";
 import { type ChannelHealthRow, listRuns, readChannelHealth, type StoredRun } from "@/lib/db/runs";
+import type { ArchiveUsage } from "@/lib/limites";
 import { ATRASO_MIN, avaliarSaude, formatarDuracao, minutosDesde, totais } from "@/lib/painel";
 
 export const dynamic = "force-dynamic";
@@ -42,13 +52,32 @@ export default async function Painel() {
 
   let runs: StoredRun[] = [];
   let health: ChannelHealthRow[] = [];
+  let uso: ArchiveUsage | null = null;
+  let faixas: HuntFaixa[] = [];
+  let canais: ChannelFootprint[] = [];
   let erro: string | null = null;
+  let erroLimites: string | null = null;
 
+  // Duas leituras separadas, não um Promise.all só: as vistas da 0010 são
+  // novas, e enquanto a migração não roda elas falham. Numa promessa única
+  // esse erro apagaria o log de rodadas junto — o painel perderia justamente
+  // a tela que já funcionava, por causa de uma seção que ainda não existe.
   try {
     const db = createDb();
     [runs, health] = await Promise.all([listRuns(db, { limit: 120 }), readChannelHealth(db)]);
   } catch (e) {
     erro = e instanceof Error ? e.message : String(e);
+  }
+
+  try {
+    const db = createDb();
+    [uso, faixas, canais] = await Promise.all([
+      readArchiveUsage(db),
+      readHuntFaixas(db, agora),
+      readChannelFootprint(db),
+    ]);
+  } catch (e) {
+    erroLimites = e instanceof Error ? e.message : String(e);
   }
 
   const saude = avaliarSaude(runs, agora);
@@ -108,6 +137,37 @@ export default async function Painel() {
           </div>
         </div>
       </section>
+
+      {erroLimites && (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <header>
+            <span className="dot dot-degraded" aria-hidden />
+            <span className="label">Limites e canais indisponíveis</span>
+          </header>
+          <div className="body">
+            <p className="err">{erroLimites}</p>
+            <p className="empty" style={{ marginTop: 10 }}>
+              As vistas <code>archive_usage</code>, <code>hunt_faixas</code> e{" "}
+              <code>channel_footprint</code> vêm da migração{" "}
+              <code>supabase/migrations/0010_limites_e_canais.sql</code>. O log de rodadas acima
+              continua valendo — só estas seções dependem dela.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {uso && <Disco uso={uso} />}
+
+      <div className="grid-2" style={{ marginBottom: 16 }}>
+        {erroLimites === null && <Cacas faixas={faixas} />}
+        <Coleta runs={runs} />
+      </div>
+
+      {erroLimites === null && (
+        <div style={{ marginBottom: 16 }}>
+          <Canais canais={canais} />
+        </div>
+      )}
 
       <div className="grid-2">
         <section className="panel">

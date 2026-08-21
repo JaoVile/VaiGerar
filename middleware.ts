@@ -7,7 +7,7 @@ import { COOKIE, verifySession } from "@/lib/auth/session";
  * passar essas por aqui só criaria uma segunda porta pra manter.
  */
 export const config = {
-  matcher: ["/", "/api/runs"],
+  matcher: ["/", "/api/runs", "/api/channels/:path*"],
 };
 
 export async function middleware(req: NextRequest) {

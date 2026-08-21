@@ -69,7 +69,22 @@ export async function menorAtualPorCaca(
     .order("created_at", { ascending: true });
   if (huntErr) throw new Error(`Lendo caças de ${chatId}: ${huntErr.message}`);
 
-  const hunts = (huntRows ?? []).map(toHunt);
+  return menorAtualDeHunts(db, (huntRows ?? []).map(toHunt), agora);
+}
+
+/**
+ * O mesmo cálculo a partir de uma lista de caças já lida.
+ *
+ * Existe porque o painel lê `hunt_faixas` (0010), que é a mesma tabela **sem
+ * `chat_id`** — o painel mostra faixa, não dono. Se ele refizesse a conta por
+ * fora, o "menor agora" da web e o do `/agora` no bot podiam discordar, que é
+ * a divergência que o cabeçalho desta função existe pra impedir.
+ */
+export async function menorAtualDeHunts(
+  db: SupabaseClient,
+  hunts: Hunt[],
+  agora: Date = new Date(),
+): Promise<CacaAtual[]> {
   if (hunts.length === 0) return [];
 
   const desde = new Date(agora.getTime() - JANELA_HORAS * 60 * 60 * 1000).toISOString();

@@ -7,7 +7,8 @@
  * lendo. Se um dia o Telegram quiser limitar ou avisar, agora tem como.
  */
 const USER_AGENT = "cacador-ofertas/1.0 (+https://github.com/JaoVile/VaiGerar)";
-const TIMEOUT_MS = 15_000;
+/** Teto por canal. Exportado porque o painel mostra os limites da coleta. */
+export const TIMEOUT_MS = 15_000;
 
 export function channelPageUrl(slug: string, before?: number): string {
   const base = `https://t.me/s/${slug}`;

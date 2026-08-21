@@ -1,7 +1,8 @@
 export type ChannelRow = {
   slug: string;
   title: string | null;
-  kind: "tech" | "china";
+  /** As cinco categorias que `channels_kind_check` aceita desde a 0003. */
+  kind: "tech" | "china" | "moda" | "casa" | "geral";
   is_active: boolean;
   last_post_id: number;
   backfill_cursor: number | null;

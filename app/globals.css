@@ -457,3 +457,409 @@ td.dim {
   opacity: 0.45;
   cursor: default;
 }
+
+/* =========================================================================
+   VITRINE — a página pública (/sobre e /login)
+   =========================================================================
+   Tese: ruído contra sinal. A parede de promoção rola atrás, ilegível de
+   propósito; um único alerta fica parado na frente. Toda a ousadia da página
+   está nesse contraste — o resto é deliberadamente quieto.
+
+   Prefixo `vit-` porque o painel operacional divide esta folha e não deve
+   herdar nada daqui.
+   ========================================================================= */
+
+.vit {
+  --vit-ruido: #ff8a3d;
+  --vit-wrap: 1100px;
+  font-family: var(--sans);
+}
+
+.vit em {
+  font-style: normal;
+  color: var(--signal);
+}
+
+/* --- HERO --------------------------------------------------------------- */
+
+.vit-hero {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 96px 20px;
+}
+
+/* A parede: três trilhas em velocidades diferentes pra não pulsar em bloco. */
+.vit-parede {
+  position: absolute;
+  inset: -10% 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  pointer-events: none;
+  user-select: none;
+  /* Apaga nas bordas: a parede não tem começo nem fim visível. */
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+
+.vit-trilha {
+  overflow: hidden;
+}
+.vit-trilha[data-col="1"],
+.vit-trilha[data-col="2"] {
+  display: none;
+}
+
+.vit-fluxo {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation-name: vit-drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+@keyframes vit-drift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
+}
+
+.vit-post {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--vit-ruido) 26%, transparent);
+}
+
+.vit-hero-frente {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: var(--vit-wrap);
+  margin: 0 auto;
+}
+
+/* O conteudo precisa de chao proprio: sem isso o texto de apoio disputa
+   legibilidade com a parede e perde. O anteparo apaga pra direita, entao o
+   ruido continua visivel em volta em vez de virar uma caixa opaca. */
+.vit-hero-frente::before {
+  content: "";
+  position: absolute;
+  inset: -14% -6% -14% -50vw;
+  z-index: -1;
+  background: linear-gradient(
+    to right,
+    var(--ink) 0%,
+    var(--ink) 62%,
+    color-mix(in srgb, var(--ink) 88%, transparent) 78%,
+    transparent 100%
+  );
+}
+
+.vit-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 18px;
+}
+
+.vit-titulo {
+  font-family: var(--vit-display), var(--sans);
+  font-weight: 800;
+  font-stretch: 112%;
+  font-size: clamp(52px, 12vw, 132px);
+  line-height: 0.86;
+  letter-spacing: -0.035em;
+  margin-bottom: 40px;
+}
+
+/* O alerta: a única coisa nítida, parada e emoldurada da tela. */
+.vit-alerta {
+  display: inline-block;
+  background: var(--ink-deep);
+  border: 1px solid color-mix(in srgb, var(--signal) 45%, transparent);
+  box-shadow:
+    0 0 0 1px var(--ink-deep),
+    0 24px 70px -20px rgb(0 0 0 / 0.9),
+    0 0 90px -30px var(--signal);
+  padding: 20px 26px 22px;
+  min-width: min(340px, 100%);
+  margin-bottom: 40px;
+}
+
+.vit-alerta-topo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--signal);
+  margin-bottom: 14px;
+}
+
+.vit-ponto {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--signal);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal) 18%, transparent);
+}
+
+.vit-alerta-produto {
+  font-size: 15px;
+  color: var(--bone);
+  margin-bottom: 2px;
+}
+
+.vit-alerta-preco {
+  font-family: var(--vit-display), var(--sans);
+  font-weight: 800;
+  font-stretch: 108%;
+  font-size: 40px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--bone);
+}
+
+.vit-alerta-nota {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--signal);
+  margin-top: 8px;
+}
+
+.vit-lede {
+  max-width: 46ch;
+  font-size: 16.5px;
+  line-height: 1.68;
+  color: var(--mute);
+}
+
+/* --- SEÇÕES ------------------------------------------------------------- */
+
+.vit-sec {
+  max-width: var(--vit-wrap);
+  margin: 0 auto;
+  padding: 88px 20px;
+  border-top: 1px solid var(--rule);
+}
+
+.vit-sec-titulo {
+  font-family: var(--vit-display), var(--sans);
+  font-weight: 500;
+  font-stretch: 100%;
+  font-size: clamp(26px, 4vw, 40px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--bone);
+  margin-bottom: 18px;
+}
+
+.vit-sec-lede {
+  max-width: 58ch;
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: var(--mute);
+  margin-bottom: 36px;
+}
+
+/* O post cru, do jeito que chega. */
+.vit-cru {
+  font-family: var(--mono);
+  font-size: clamp(14px, 2.4vw, 20px);
+  color: var(--vit-ruido);
+  background: var(--ink-deep);
+  border-left: 2px solid var(--vit-ruido);
+  padding: 18px 22px;
+  margin-bottom: 32px;
+  overflow-x: auto;
+}
+
+.vit-leituras {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+.vit-leitura {
+  border: 1px solid var(--rule);
+  padding: 22px 24px 24px;
+  background: var(--panel);
+}
+
+.vit-leitura-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.vit-errada .vit-leitura-tag { color: var(--crit); }
+.vit-certa .vit-leitura-tag { color: var(--ok); }
+
+.vit-errada { border-left: 2px solid var(--crit); }
+.vit-certa { border-left: 2px solid var(--ok); }
+
+.vit-leitura-saida {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--bone);
+  margin-bottom: 14px;
+}
+.vit-leitura-saida b { font-weight: 500; }
+.vit-errada .vit-leitura-saida b { color: var(--crit); }
+.vit-certa .vit-leitura-saida b { color: var(--ok); }
+
+.vit-leitura-nota {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--mute);
+}
+
+/* --- RECUSAS ------------------------------------------------------------ */
+
+.vit-recusas {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 28px;
+}
+
+.vit-recusas li {
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+
+.vit-recusas h3 {
+  font-family: var(--vit-display), var(--sans);
+  font-weight: 500;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--bone);
+  margin-bottom: 10px;
+}
+
+.vit-recusas p {
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: var(--mute);
+  max-width: 44ch;
+}
+
+/* --- PÉ ----------------------------------------------------------------- */
+
+.vit-rodape {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.vit-stack { color: var(--faint); }
+
+/* --- RESPONSIVO --------------------------------------------------------- */
+
+@media (min-width: 760px) {
+  .vit-parede {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+  }
+  .vit-trilha[data-col="1"],
+  .vit-trilha[data-col="2"] {
+    display: block;
+  }
+  .vit-post { font-size: 13px; }
+  .vit-leituras { grid-template-columns: 1fr 1fr; }
+  .vit-recusas { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* A parede é o argumento da página, então ela não some sem movimento:
+   congela numa posição legível em vez de desaparecer. */
+@media (prefers-reduced-motion: reduce) {
+  .vit-fluxo {
+    animation: none;
+    transform: translateY(-12%);
+  }
+}
+
+/* --- ACESSO (só na /login) ---------------------------------------------- */
+
+.vit-acesso {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  padding: 24px 26px 26px;
+  max-width: 460px;
+  margin-bottom: 40px;
+}
+
+.vit-acesso-tag {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+
+.vit-acesso-nota {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mute);
+  margin-bottom: 18px;
+}
+
+.vit-acesso-linha {
+  display: flex;
+  gap: 0;
+}
+
+.vit-acesso-linha input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  background: var(--ink-deep);
+  color: var(--bone);
+  border: 1px solid var(--rule);
+  border-right: 0;
+  padding: 11px 13px;
+}
+
+.vit-acesso-linha button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 11px 20px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--mute);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.vit-acesso-linha button:hover {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: var(--ink-deep);
+}
+
+.vit-acesso-erro {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--crit);
+  margin-top: 12px;
+}

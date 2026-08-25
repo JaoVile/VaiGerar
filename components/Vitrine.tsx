@@ -1,142 +1,198 @@
+import { Archivo, JetBrains_Mono } from "next/font/google";
+
 /**
- * A parte pública do projeto: o que ele faz e por que as decisões são essas.
+ * A parte pública do projeto.
  *
- * Vive num componente porque duas rotas mostram o mesmo conteúdo — `/sobre`
+ * A tese é ruído contra sinal: o coletor lê milhares de posts histéricos por
+ * dia e quase nunca fala. Então a página não *descreve* isso, ela mostra —
+ * a parede de promoção rola atrás, ilegível, e um único alerta fica parado
+ * na frente. Quem chega entende o produto antes de ler uma linha sobre ele.
+ *
+ * Vive num componente porque duas rotas mostram o mesmo conteúdo: `/sobre`
  * pra quem chega por link e `/login` pra quem cai no painel sem sessão.
- * Duplicar o texto em duas páginas é garantir que uma delas envelheça.
  */
 
-const FEATURES = [
+// Sem `weight` de propósito: o eixo de largura só existe na fonte variável, e
+// o `wdth` é justamente o que dá ao título o peso de placa de preço.
+const display = Archivo({
+	subsets: ["latin"],
+	axes: ["wdth"],
+	variable: "--vit-display",
+});
+
+const mono = JetBrains_Mono({
+	subsets: ["latin"],
+	variable: "--vit-mono",
+});
+
+/**
+ * O vernáculo real dos canais: caixa alta, emoji, urgência inventada. É o
+ * material bruto que o parser encara — por isso aparece como é, e não como
+ * um lorem ipsum educado.
+ */
+const RUIDO = [
+	"🔥 MENOR PREÇO! Fone JBL Tune 510BT R$ 89,90 CORRE",
+	"CUPOM R$30 OFF em qualquer produto",
+	"ÚLTIMAS UNIDADES!!! Air Fryer 4L R$ 199",
+	'⚡ RELÂMPAGO Smart TV 50" R$ 1.799 SÓ HOJE',
+	"PREÇO ERRADO?? Notebook R$ 2.099 🔥🔥🔥",
+	"FRETE GRÁTIS + 20% OFF acima de R$ 300",
+	"IMPERDÍVEL 😱 Capinha iPhone R$ 12,90",
+	"BAIXOU DE NOVO! Cafeteira R$ 149",
+	"R$ 50 OFF no primeiro pedido",
+	"ACABANDO ⏰ Teclado mecânico R$ 219",
+	"PROMOÇÃO RELÂMPAGO 🚨 SSD 1TB R$ 329",
+	"SÓ ATÉ MEIA-NOITE!! Mouse gamer R$ 79,90",
+	"CUPOM: LEVA10 — 10% em tudo",
+	"OLHA O PREÇO 👀 Robô aspirador R$ 899",
+	"VOLTOU! Caixa de som R$ 119 🔥",
+	"DESCONTO PROGRESSIVO ATÉ 40% OFF",
+];
+
+/** Três trilhas com velocidades diferentes: a parede não pulsa em bloco. */
+const TRILHAS = [
+	{ itens: [...RUIDO.slice(0), ...RUIDO.slice(0)], dur: "48s" },
 	{
-		label: "Coleta",
-		text: "Um coletor em cron raspa as páginas públicas dos canais a cada cinco minutos e extrai preço, cupom e loja de texto livre em português.",
+		itens: [...RUIDO.slice(5), ...RUIDO.slice(0, 5), ...RUIDO.slice(5)],
+		dur: "63s",
 	},
 	{
-		label: "Caçada",
-		text: "Você descreve o que procura pro bot de Telegram; um job separado casa os posts novos contra a sua faixa de preço e só então alerta.",
-	},
-	{
-		label: "Sinal, não ruído",
-		text: "Cupom não é confundido com preço, e um piso de sanidade calibrado com três meses de dado real filtra capinha sendo lida como celular.",
-	},
-	{
-		label: "Canário",
-		text: "Se todo canal devolve zero post no mesmo tick, o painel acusa — isso não é dia parado, é o coletor quebrado.",
+		itens: [...RUIDO.slice(9), ...RUIDO.slice(0, 9), ...RUIDO.slice(9)],
+		dur: "55s",
 	},
 ];
 
-const METRICS = [
-	{ value: "476", label: "Testes passando" },
-	{ value: "103", label: "Commits" },
-	{ value: "9", label: "Migrações SQL" },
-	{ value: "25", label: "Canais ativos" },
+const RECUSAS = [
+	{
+		titulo: "Cupom não é preço",
+		texto:
+			"“R$30 OFF” lido como produto de R$ 30 derruba a mediana e faz toda caçada parecer satisfeita. Separar as duas coisas foi o conserto que tornou o alerta confiável.",
+	},
+	{
+		titulo: "Capinha não é celular",
+		texto:
+			"O piso de sanidade foi calibrado contra três meses de posts coletados, com taxa de falso positivo documentada por limiar. Decisão embasada numa tabela, não em chute.",
+	},
+	{
+		titulo: "Silêncio é suspeito",
+		texto:
+			"Se todo canal devolve zero post no mesmo tick, isso não é dia parado — é o coletor quebrado. O canário pega a falha silenciosa que monitoramento costuma deixar passar.",
+	},
 ];
 
 export function Vitrine({ children }: { children?: React.ReactNode }) {
 	return (
-		<>
-			<p className="label" style={{ marginBottom: 16 }}>
-				// Caçador de Ofertas
-			</p>
-			<h1
-				style={{
-					fontSize: "clamp(30px, 5.5vw, 52px)",
-					lineHeight: 1.06,
-					fontWeight: 600,
-					maxWidth: 760,
-					marginBottom: 20,
-				}}
-			>
-				Lê canais de promoção do Telegram e só te acorda quando o preço tá
-				certo.
-			</h1>
-			<p
-				style={{
-					maxWidth: 560,
-					color: "var(--mute)",
-					fontSize: 16,
-					marginBottom: 40,
-				}}
-			>
-				Canais de oferta publicam milhares de itens por dia. Todo bot de alerta
-				pronto dispara pelo nome do produto — dispara sempre, e você para de
-				ler. Este não.
-			</p>
-
-			{children}
-
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-					gap: 1,
-					background: "var(--rule)",
-					border: "1px solid var(--rule)",
-					marginBottom: 48,
-				}}
-			>
-				{METRICS.map((m) => (
-					<div
-						key={m.label}
-						style={{ background: "var(--panel)", padding: "18px 16px" }}
-					>
-						<div
-							className="mono"
-							style={{ fontSize: 26, color: "var(--signal)", marginBottom: 6 }}
-						>
-							{m.value}
+		<div className={`vit ${display.variable} ${mono.variable}`}>
+			{/* HERO — a parede rola, o alerta não */}
+			<section className="vit-hero">
+				<div className="vit-parede" aria-hidden="true">
+					{TRILHAS.map((t, i) => (
+						<div key={t.dur} className="vit-trilha" data-col={i}>
+							<div className="vit-fluxo" style={{ animationDuration: t.dur }}>
+								{t.itens.map((texto, j) => (
+									<p key={`${texto}-${j}`} className="vit-post">
+										{texto}
+									</p>
+								))}
+							</div>
 						</div>
-						<div className="label">{m.label}</div>
-					</div>
-				))}
-			</div>
+					))}
+				</div>
 
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-					gap: 24,
-					marginBottom: 48,
-				}}
-			>
-				{FEATURES.map((f) => (
-					<div key={f.label}>
-						<p
-							className="label"
-							style={{ marginBottom: 8, color: "var(--signal)" }}
-						>
-							{f.label}
+				<div className="vit-hero-frente">
+					<p className="vit-eyebrow">Caçador de Ofertas</p>
+					<h1 className="vit-titulo">
+						Lê tudo.
+						<br />
+						<em>Fala pouco.</em>
+					</h1>
+
+					<div className="vit-alerta" role="status">
+						<p className="vit-alerta-topo">
+							<span className="vit-ponto" />
+							Alerta
 						</p>
-						<p style={{ fontSize: 14, lineHeight: 1.6 }}>{f.text}</p>
+						<p className="vit-alerta-produto">Monitor LG 27&quot; 144Hz</p>
+						<p className="vit-alerta-preco">R$ 1.199,00</p>
+						<p className="vit-alerta-nota">
+							entrou na sua faixa — teto R$ 1.400
+						</p>
 					</div>
-				))}
-			</div>
 
-			<div
-				style={{
-					borderTop: "1px solid var(--rule)",
-					paddingTop: 20,
-					display: "flex",
-					gap: 24,
-					alignItems: "center",
-					flexWrap: "wrap",
-				}}
-			>
-				<span className="label">Next.js · Supabase · Telegram Bot</span>
-				<a
-					href="https://github.com/JaoVile/VaiGerar"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="mono"
-					style={{
-						fontSize: 12,
-						textTransform: "uppercase",
-						letterSpacing: "0.1em",
-					}}
-				>
-					código no GitHub →
-				</a>
-			</div>
-		</>
+					<p className="vit-lede">
+						Vinte e cinco canais de promoção, varridos a cada cinco minutos.
+						Quase tudo que passa por aqui morre no arquivo. Você só é
+						interrompido quando o preço que você pediu realmente aconteceu.
+					</p>
+				</div>
+			</section>
+
+			{/* AUTÓPSIA — a decisão técnica que separa este bot dos prontos */}
+			<section className="vit-sec">
+				<h2 className="vit-sec-titulo">O post que quebrava tudo</h2>
+				<p className="vit-sec-lede">
+					Bot de alerta pronto dispara pelo nome do produto. Esse é o motivo de
+					ele disparar sempre — e de você parar de ler. O problema aparece
+					inteiro num post de uma linha:
+				</p>
+
+				<p className="vit-cru">CUPOM R$30 OFF em qualquer produto</p>
+
+				<div className="vit-leituras">
+					<div className="vit-leitura vit-errada">
+						<p className="vit-leitura-tag">Leitura ingênua</p>
+						<p className="vit-leitura-saida">
+							produto: <b>R$ 30,00</b>
+						</p>
+						<p className="vit-leitura-nota">
+							Vira a oferta mais barata do dia, puxa a mediana pra baixo e
+							satisfaz qualquer caçada aberta. O alerta chega, e está errado.
+						</p>
+					</div>
+					<div className="vit-leitura vit-certa">
+						<p className="vit-leitura-tag">Leitura do caçador</p>
+						<p className="vit-leitura-saida">
+							cupom: <b>R$ 30 de desconto</b>
+							<br />
+							produto: <b>sem preço</b>
+						</p>
+						<p className="vit-leitura-nota">
+							Não há produto, então não há oferta. O post é arquivado e ninguém
+							é acordado. Silêncio aqui é a resposta certa.
+						</p>
+					</div>
+				</div>
+			</section>
+
+			{/* O QUE ELE SE RECUSA A FAZER */}
+			<section className="vit-sec">
+				<h2 className="vit-sec-titulo">
+					Três coisas que ele se recusa a fazer
+				</h2>
+				<ul className="vit-recusas">
+					{RECUSAS.map((r) => (
+						<li key={r.titulo}>
+							<h3>{r.titulo}</h3>
+							<p>{r.texto}</p>
+						</li>
+					))}
+				</ul>
+			</section>
+
+			{/* ACESSO + RODAPÉ */}
+			<section className="vit-sec vit-pe">
+				{children}
+				<div className="vit-rodape">
+					<span className="vit-stack">Next.js · Supabase · Telegram Bot</span>
+					<a
+						href="https://github.com/JaoVile/VaiGerar"
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						código no GitHub →
+					</a>
+				</div>
+			</section>
+		</div>
 	);
 }
